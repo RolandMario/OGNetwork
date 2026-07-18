@@ -39,7 +39,7 @@ const tenantMiddleware = async (req, res, next) => {
         res.status(statusCode).json({
             status: 'error',
             message,
-            ...(NODE_ENV === 'development' && { error: message })
+            ...(process.env.NODE_ENV === 'production' && { error: message })
         });
     }
 };
