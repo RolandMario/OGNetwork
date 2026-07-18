@@ -66,7 +66,7 @@ async function processWebhookEvent(event, tenantConfig) {
   const { tenantId } = tenantConfig;
 
   try {
-    const connection  = getTenantConnection(tenantId);
+    const connection  = await getTenantConnection(tenantId);
     const Transaction = connection.models.Transaction;
     const Wallet      = connection.models.Wallet;
     const User        = connection.models.User;
