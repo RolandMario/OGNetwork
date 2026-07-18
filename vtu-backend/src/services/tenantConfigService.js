@@ -28,7 +28,12 @@ async function loadTenantSecrets() {
     throw new Error('[tenantConfigService] DATABASE_URI is not set. Check vtu-backend/.env.');
   }
 console.log('connecting to master db', MASTER_URI)
-  masterConnection = await mongoose.createConnection(MASTER_URI).asPromise();
+  masterConnection = await mongoose.createConnection(MASTER_URI,{
+    serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
+      maxPoolSize: 10,           // Good for serverless
+      minPoolSize: 2,
+  }).asPromise();
   console.log('[tenantConfigService] Connected to Master DB.');
 
   const MasterTenantSchema = new mongoose.Schema(
