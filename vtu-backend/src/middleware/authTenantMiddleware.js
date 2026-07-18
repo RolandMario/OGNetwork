@@ -28,25 +28,23 @@ const authTenantMiddleware = async (req, res, next) => {
 
         console.log(`[authTenantMiddleware] Connecting to tenant: ${sanitizedTenantId}`);
 
-        // 2. Get tenant connection
+        // 2. Get tenant connection (now supports lazy fallback)
         const tenantConnection = await getTenantConnection(sanitizedTenantId);
-        
-        console.log('Auth middleware DB connection successful');
-        console.log('Middleware Connection Status:', tenantConnection.readyState);
-        console.log('Models Attached:', Object.keys(tenantConnection.models));
 
         // 3. Attach models and connection to request
         req.models = tenantConnection.models;
         req.dbConnection = tenantConnection;
-        req.tenantId = sanitizedTenantId; // Also store the tenant ID for reference
+        req.tenantId = sanitizedTenantId;
 
         next();
     } catch (error) {
         console.error('[authTenantMiddleware] Error:', error.message);
-        res.status(500).json({
+        const message = error.message || 'Failed to establish database connection for tenant.';
+        const statusCode = error.statusCode || 500;
+        res.status(statusCode).json({
             status: 'error',
-            message: 'Failed to establish database connection for tenant.',
-            error: process.env.NODE_ENV === 'development' ? error.message : undefined
+            message,
+            ...(process.env.NODE_ENV === 'development' && { error: message })
         });
     }
 };

@@ -24,28 +24,22 @@ const tenantMiddleware = async (req, res, next) => {
     }
 
     try {
-        console.log('trying to connect to the DB')
-        // 2. Get Connection from Service
+        // 2. Get Connection from Service (now supports lazy fallback)
         const tenantConnection = await getTenantConnection(sanitizedTenantId);
-         console.log(' DB connection successfull')
 
-
-         // CRITICAL LOGGING:
-    console.log('Middleware Connection Status:', tenantConnection.readyState); 
-    console.log('Models Attached:', Object.keys(tenantConnection.models));
         // 3. Attach Models to Request
-        // The connection object already has the models compiled onto it in the service.
-        // We make them easily accessible to controllers.
         req.models = tenantConnection.models;
-        req.dbConnection = tenantConnection; // Optional: attach raw connection if needed
+        req.dbConnection = tenantConnection;
 
-            console.log('tenantmiddleware executed')
         next();
     } catch (error) {
         console.error('Tenant Middleware Error:', error);
-        res.status(500).json({
+        const message = error.message || 'Failed to establish database connection for tenant.';
+        const statusCode = error.statusCode || 500;
+        res.status(statusCode).json({
             status: 'error',
-            message: 'Failed to establish database connection for tenant.'
+            message,
+            ...(NODE_ENV === 'development' && { error: message })
         });
     }
 };

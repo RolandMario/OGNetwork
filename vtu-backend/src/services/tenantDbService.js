@@ -3,7 +3,7 @@
 // src/services/tenantDbService.js
 
 const mongoose = require('mongoose');
-const { getAllTenantSecrets } = require('./tenantConfigService');
+const { getAllTenantSecrets, getTenantSecret } = require('./tenantConfigService');
 
 // Model definitions
 const { schema: UserSchema,        modelName: UserModelName        } = require('../models/User');
@@ -109,22 +109,56 @@ async function connectAllTenantDbs() {
 
 /**
  * Returns the cached mongoose connection for a tenant.
+ * If missing (e.g., due to cold-start or unseeded cache), attempts
+ * to create the connection on-demand using the tenant config.
  * Throws a typed error if tenant is unknown — caught by tenantMiddleware.
  */
-function getTenantConnection(tenantId) {
-  const connection = tenantConnections[tenantId];
+async function getTenantConnection(tenantId) {
+  let connection = tenantConnections[tenantId];
 
+  // Lazy fallback: create connection on-demand if missing
   if (!connection) {
-    const err = new Error(
-      `[tenantDbService] No connection found for tenant "${tenantId}". ` +
-      'Ensure this tenant exists in the Master DB and the server has been restarted.'
-    );
-    err.statusCode = 404;
-    throw err;
+    console.warn(`[tenantDbService] Cache miss for "${tenantId}" — attempting lazy connect.`);
+
+    const secret = getTenantSecret(tenantId);
+
+    if (!secret) {
+      const err = new Error(
+        `[tenantDbService] No connection found for tenant "${tenantId}". ` +
+        'Ensure this tenant exists in the Master DB and the server has been restarted.'
+      );
+      err.statusCode = 404;
+      throw err;
+    }
+
+    // Single-flight guard to avoid duplicate connects for same tenant
+    if (!connectTenantDb._pending[tenantId]) {
+      connectTenantDb._pending[tenantId] = connectTenantDb(secret)
+        .then(() => {
+          delete connectTenantDb._pending[tenantId];
+        })
+        .catch((err) => {
+          delete connectTenantDb._pending[tenantId];
+          throw err;
+        });
+    }
+
+    try {
+      await connectTenantDb._pending[tenantId];
+      connection = tenantConnections[tenantId];
+    } catch (err) {
+      throw new Error(
+        `[tenantDbService] Failed to connect tenant "${tenantId}": ${err.message}`
+      );
+    }
   }
 
   return connection;
 }
+
+// In-flight connection guard (prevents duplicate parallel connects)
+connectTenantDb._pending = {};
+
 
 const getTenantDb = getTenantConnection; // alias
 
