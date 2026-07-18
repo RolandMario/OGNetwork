@@ -31,6 +31,9 @@ const app = express();
 const PORT = process.env.PORT || 5001;
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
+// Trust first proxy (most common and secure for Vercel, Render, Railway, etc.)
+app.set('trust proxy', 1);
+
 // ---------------------------------------------------------------------------
 // 1. Security headers
 // ---------------------------------------------------------------------------
