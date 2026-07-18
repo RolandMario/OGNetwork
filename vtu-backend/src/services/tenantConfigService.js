@@ -27,7 +27,7 @@ async function loadTenantSecrets() {
   if (!MASTER_URI) {
     throw new Error('[tenantConfigService] DATABASE_URI is not set. Check vtu-backend/.env.');
   }
-
+console.log('connecting to master db', MASTER_URI)
   masterConnection = await mongoose.createConnection(MASTER_URI).asPromise();
   console.log('[tenantConfigService] Connected to Master DB.');
 
