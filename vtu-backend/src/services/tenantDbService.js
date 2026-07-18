@@ -123,9 +123,13 @@ async function getTenantConnection(tenantId) {
     const secret = getTenantSecret(tenantId);
 
     if (!secret) {
+      const available = Object.keys(tenantConnections).length > 0
+        ? `Available connections: [${Object.keys(tenantConnections).join(', ')}]`
+        : 'No tenant connections loaded. Check: DATABASE_URI in Vercel env, and "tenants" collection in Master DB.';
       const err = new Error(
         `[tenantDbService] No connection found for tenant "${tenantId}". ` +
-        'Ensure this tenant exists in the Master DB and the server has been restarted.'
+        'Ensure this tenant exists in the Master DB and the server has been restarted. ' +
+        available
       );
       err.statusCode = 404;
       throw err;
