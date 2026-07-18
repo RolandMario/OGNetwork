@@ -27,6 +27,7 @@ async function loadTenantSecrets() {
   if (!MASTER_URI) {
     throw new Error('[tenantConfigService] DATABASE_URI is not set. Check vtu-backend/.env.');
   }
+  try {
 console.log('connecting to master db', MASTER_URI)
   masterConnection = await mongoose.createConnection(MASTER_URI,{
     serverSelectionTimeoutMS: 5000,
@@ -76,6 +77,17 @@ console.log('connecting to master db', MASTER_URI)
     `[tenantConfigService] Loaded secrets for ${tenants.length} tenant(s): ` +
     Object.keys(tenantSecretsCache).join(', ')
   );
+
+} catch (error) {
+  console.error('❌ Failed to load tenant secrets:', error.message);
+
+    if (error.name === 'MongooseServerSelectionError') {
+      console.error('💡 Most likely cause: MongoDB Atlas IP not whitelisted. Add 0.0.0.0/0 in Network Access.');
+    }
+
+    masterConnection = null; // Reset connection on failure
+    throw error; // Let the caller handle the fatal error
+}
 }
 
 /**
