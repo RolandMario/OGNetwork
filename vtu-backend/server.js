@@ -62,7 +62,7 @@ app.use('/api/v1/auth', authLimiter);
 // 3. CORS — restrict in production
 // ---------------------------------------------------------------------------
 const allowedOrigins = NODE_ENV === 'production'
-  ? (process.env.ALLOWED_ORIGINS || '').split(',').filter(Boolean)
+  ? (process.env.ALLOWED_ORIGINS || 'https://og-network-dashboard.vercel.app').split(',').filter(Boolean)
   : ['*'];
 
 app.use(cors({
