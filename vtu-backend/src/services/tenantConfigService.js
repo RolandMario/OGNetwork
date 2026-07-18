@@ -23,7 +23,7 @@ function getMasterConnection() {
 }
 
 async function loadTenantSecrets() {
-  const MASTER_URI = process.env.DATABASE_URI || "mongodb+srv://RolandMario:gzS5dvin2g8MQThj@cluster-vtu.mx2yyag.mongodb.net/VTU?retryWrites=true&w=majority&appName=Cluster-vtu";
+  const MASTER_URI = process.env.DATABASE_URI;
   if (!MASTER_URI) {
     throw new Error('[tenantConfigService] DATABASE_URI is not set. Check vtu-backend/.env.');
   }
