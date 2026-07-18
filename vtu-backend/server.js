@@ -1,229 +1,233 @@
-/* eslint-disable no-console */
-/**
- * server.js
- * The main entry point for the VTU Backend Application.
- * Handles DB connection, middleware setup, route registration, and server startup.
- */
+'use strict';
 
-// 1. LOAD ENVIRONMENT VARIABLES
-// Must be done at the very top before any other config loads
-// require('dotenv').config();
-require('dotenv').config({ path: './vtu-backend/.env' });
+const path = require('path');
 
+// Load environment variables from vtu-backend/.env FIRST — before any other imports
+// that might read process.env (e.g. DB connection strings, API keys).
+// require('dotenv').config({ path: path.resolve(__dirname, 'vtu-backend/.env') });
+require('dotenv').config({ path: path.resolve(__dirname, '.env') });
 
-// 2. HANDLE UNCAUGHT SYNCHRONOUS EXCEPTIONS
-// Catches bugs in sync code before the server even starts.
-process.on('uncaughtException', (err) => {
-  console.error('UNCAUGHT EXCEPTION! 💥 Shutting down...');
-  console.error(err.name, err.message);
-  process.exit(1); // Exit with failure code
-});
-
-// --- IMPORTS ---
 const express = require('express');
-const mongoose = require('mongoose');
 const helmet = require('helmet');
 const cors = require('cors');
-const morgan = require('morgan');
-const mongoSanitize = require('express-mongo-sanitize');
-// const xss = require('xss-clean');
-const hpp = require('hpp');
+const bodyParser = require('body-parser');
+const rateLimit = require('express-rate-limit');
 
 
-
-
-
-// Import Route handlers (assuming these files exist based on previous design)
-const authRoutes = require('./src/routes/authRoutes');
-const vtuRoutes = require('./src/routes/vtuRoutes');
-const userRoutes = require('./src/routes/userRoutes');
-const adminRoutes = require('./src/routes/adminRoutes');
-const webhookRoutes = require('./src/routes/webhookRoutes');
-const bodyParser = require('body-parser');   // <--- add this
-// Import GlobalErrorHandler (A dedicated middleware function)
-// const globalErrorHandler = require('./src/controllers/errorController');
-
-
-// IMPORT NEW MIDDLEWARE
+const { loadTenantSecrets } = require('./src/services/tenantConfigService');
+const { connectAllTenantDbs } = require('./src/services/tenantDbService');
 const tenantMiddleware = require('./src/middleware/tenantMiddleware');
 
-// --- APP INITIALIZATION ---
+// Route imports
+const webhookRoutes = require('./src/routes/webhookRoutes');
+// Add additional route imports here as the project grows, e.g.:
+const authRoutes      = require('./src/routes/authRoutes');
+const userRoutes      = require('./src/routes/userRoutes');
+const vtuRoutes = require('./src/routes/vtuRoutes');
+const adminRoutes = require('./src/routes/adminRoutes');
+
+// const walletRoutes = require('./src/routes/walletRoutes');
 const app = express();
+const PORT = process.env.PORT || 5001;
+const NODE_ENV = process.env.NODE_ENV || 'development';
 
-// --- GLOBAL MIDDLEWARE STACK ---
-
-// 1. Set security HTTP headers
-// Helmet helps secure Express apps by setting various HTTP headers.
+// ---------------------------------------------------------------------------
+// 1. Security headers
+// ---------------------------------------------------------------------------
 app.use(helmet());
 
-// 2. Development logging
-if (process.env.NODE_ENV === 'development') {
-  app.use(morgan('dev'));
-}
+// ---------------------------------------------------------------------------
+// 2. Rate Limiting — protect against brute force and DDoS
+// ---------------------------------------------------------------------------
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { status: 'error', message: 'Too many requests, please try again later.' },
+});
+app.use('/api/', limiter);
 
-// 3. CORS Configuration
-// Essential for allowing your React Native app (or Web Dashboard) to talk to this API.
-// In production, replace origin: '*' with specific domains for security.
+// Stricter rate limit for auth routes
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10, // 10 login/register attempts per 15 minutes
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { status: 'error', message: 'Too many authentication attempts, please try again later.' },
+});
+app.use('/api/v1/auth', authLimiter);
+
+// ---------------------------------------------------------------------------
+// 3. CORS — restrict in production
+// ---------------------------------------------------------------------------
+const allowedOrigins = NODE_ENV === 'production'
+  ? (process.env.ALLOWED_ORIGINS || '').split(',').filter(Boolean)
+  : ['*'];
+
 app.use(cors({
-  origin: '*', // Change this in production! e.g. ['https://myvtuadmin.com']
-  methods: ['GET', 'POST', 'PATCH', 'DELETE', 'PUT'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  origin: (origin, callback) => {
+    // Allow requests with no origin (mobile apps, curl, etc.)
+    if (!origin || allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
 }));
 
-// 4. Webhook handling (Optional but recommended for payment gateways)
-// Some webhooks need raw body parsing before JSON parsing.
-app.use('/api/v1/webhooks', bodyParser.raw({ type: 'application/json' }), webhookRoutes);
+// ---------------------------------------------------------------------------
+// 3. Webhook routes — raw body parser MUST come before express.json()
+//    so that payment-provider signature verification can read the raw bytes.
+// ---------------------------------------------------------------------------
+app.use(
+  '/api/v1/webhooks',
+  bodyParser.raw({ type: 'application/json' }),
+  webhookRoutes
+);
 
-// 5. Body Parser, reading data from body into req.body
-// Limit body size to 10kb to prevent Denial of Service (DoS) attacks.
+// ---------------------------------------------------------------------------
+// 4. Standard body parsers (applied AFTER webhook raw parser)
+// ---------------------------------------------------------------------------
 app.use(express.json({ limit: '10kb' }));
 app.use(express.urlencoded({ extended: true, limit: '10kb' }));
 
-// --- DATA SANITIZATION (CRITICAL FOR FINTECH) ---
-
-// 6. Data sanitization against NoSQL query injection
-// Prevents attackers from sending {"$gt": ""} in login forms to bypass passwords.
-// app.use(mongoSanitize());
-// app.use(mongoSanitize({
-//   onSanitize: ({ req, key }) => {
-//     console.warn(`Sanitized ${key} from ${req.path}`);
-//   },
-//   replaceWith: '_', // optional
-// }));
-app.use((req, res, next) => {
-  req.body = mongoSanitize.sanitize(req.body);
-  // skip req.query
+// ---------------------------------------------------------------------------
+// 5. Data sanitization (Express 5 compatible)
+//    Both express-mongo-sanitize and xss-clean are incompatible with Express 5
+//    because they try to mutate req.query which is now a read-only getter.
+//    This custom middleware sanitizes req.body only (where user input lives).
+// ---------------------------------------------------------------------------
+app.use((req, _res, next) => {
+  if (req.body && typeof req.body === 'object') {
+    sanitizeInput(req.body);
+  }
   next();
 });
 
+/**
+ * Recursively sanitize an object:
+ * 1. Strip $ and . from keys (NoSQL injection prevention)
+ * 2. Strip HTML tags and XSS patterns from string values
+ */
+function sanitizeInput(obj) {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return;
+  
+  for (const key of Object.keys(obj)) {
+    const value = obj[key];
+    
+    // Remove keys starting with $ (NoSQL operators like $gt, $ne, $where)
+    if (key.startsWith('$')) {
+      delete obj[key];
+      continue;
+    }
+    
+    // Remove keys containing dots (MongoDB dotted path injection)
+    if (key.includes('.')) {
+      delete obj[key];
+      continue;
+    }
+    
+    if (typeof value === 'string') {
+      // Strip HTML tags and XSS patterns
+      obj[key] = value
+        .replace(/<[^>]*>/g, '')                    // Strip HTML tags
+        .replace(/javascript\s*:/gi, 'noop:')        // Strip javascript: protocol
+        .replace(/on\w+\s*=/gi, 'noop=')             // Strip event handlers
+        .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, ''); // Strip script blocks
+    } else if (typeof value === 'object' && value !== null) {
+      sanitizeInput(value);
+    }
+  }
+}
 
-// 7. Data sanitization against XSS (Cross-Site Scripting)
-// Cleans user input from malicious HTML code.
-// app.use(xss());
-
-const xss = require('xss');
-app.use((req, res, next) => {
-  if (req.body) req.body = JSON.parse(xss(JSON.stringify(req.body)));
-  next();
-});
-
-
-// 8. Prevent HTTP Parameter Pollution
-// Cleans up query strings (e.g., ?sort=price&sort=name).
-app.use(hpp());
-
-// --- APPLY TENANT MIDDLEWARE ---
-// This must come BEFORE your route mounting.
-// It ensures every API request has req.models populated correctly.
+// ---------------------------------------------------------------------------
+// 6. Tenant middleware — MUST be mounted at /api/v1 BEFORE route mounting.
+//    Populates req.models and per-tenant DB connections on every request.
+// ---------------------------------------------------------------------------
 app.use('/api/v1', tenantMiddleware);
 
-// --- ROUTE MOUNTING ---
-
-// Health check endpoint (useful for load balancers or quick testing)
-app.get('/', (req, res) => {
-  res.status(200).json({ status: 'success', message: 'VTU API Backend is running securely.' });
-});
-
-// API Routes (Uncomment when route files are created)
-app.use('/api/v1/auth', authRoutes);
+// ---------------------------------------------------------------------------
+// 7. API routes
+//    Webhook routes are already mounted above with their raw body parser.
+//    Mount all other routes here, beneath tenantMiddleware.
+// ---------------------------------------------------------------------------
+app.use('/api/v1/auth',  authRoutes);
 app.use('/api/v1/user', userRoutes);
 app.use('/api/v1/vtu', vtuRoutes);
-app.use('/api/v1/admin', adminRoutes);
 
-// --- 404 HANDLE UNHANDLED ROUTES ---
-// If a request reaches here, it means no route matched.
-// app.all('*', (req, res, next) => {
-//   const err = new Error(`Can't find ${req.originalUrl} on this server!`);
-//   err.statusCode = 404;
-//   err.status = 'fail';
-//   next(err); // Passing an error to next() skips to global error handling middleware
-// });
 
-// --- GLOBAL ERROR HANDLING MIDDLEWARE ---
-// All errors passed via next(err) land here.
-app.use((err, req, res, next) => {
-    err.statusCode = err.statusCode || 500;
-    err.status = err.status || 'error';
 
-    // In development, send detailed error. In production, send generic message.
-    if (process.env.NODE_ENV === 'development') {
-        res.status(err.statusCode).json({
-            status: err.status,
-            error: err,
-            message: err.message,
-            stack: err.stack
-        });
-    } else {
-        // Production: Don't leak implementation details
-        res.status(err.statusCode).json({
-            status: err.status,
-            message: err.isOperational ? err.message : 'Something went wrong!'
-        });
-    }
+// ... other route mounts ...
+// app.use('/api/v1/user',  userRoutes);
+app.use('/api/v1/admin', adminRoutes);  // <- ADD THIS
+
+// Apply tenant middleware ONLY to protected routes that need it
+//  app.use('/api/v1/user', tenantMiddleware, userRoutes);
+// app.use('/api/v1/vtu', tenantMiddleware, vtuRoutes);
+// app.use('/api/v1/admin', tenantMiddleware, adminRoutes);
+
+
+// app.use('/api/v1/wallet', walletRoutes);
+
+// ---------------------------------------------------------------------------
+// 8. Health-check endpoint (useful for load balancers / uptime monitors)
+// ---------------------------------------------------------------------------
+app.get('/health', (_req, res) => {
+  res.status(200).json({ status: 'ok', env: NODE_ENV });
 });
 
-// --- DATABASE CONNECTION AND SERVER START ---
+// ---------------------------------------------------------------------------
+// 9. 404 handler — catches requests to undefined routes
+// ---------------------------------------------------------------------------
+app.use((_req, res) => {
+  res.status(404).json({ status: 'error', message: 'Route not found' });
+});
 
-const PORT = process.env.PORT || 5000;
-// const DB = process.env.DATABASE_URI;
+// ---------------------------------------------------------------------------
+// 10. Global error handler — MUST be the last middleware registered
+// ---------------------------------------------------------------------------
+// eslint-disable-next-line no-unused-vars
+app.use((err, _req, res, _next) => {
+  const statusCode = err.statusCode || 500;
+  const message =
+    NODE_ENV === 'production' && statusCode === 500
+      ? 'Internal server error'
+      : err.message || 'Internal server error';
 
-// mongoose
-//   .connect(DB, {
-//     // Options needed for older Mongoose versions, usually not needed in v6+
-//     // useNewUrlParser: true,
-//     // useUnifiedTopology: true,
-//   })
-//   .then((con) => {
-//     console.log(`MongoDB Connected Successfully: ${con.connection.host}`);
+  console.error('[ERROR]', err);
 
+  res.status(statusCode).json({
+    status: 'error',
+    message,
+    ...(NODE_ENV === 'development' && { stack: err.stack }),
+  });
+});
 
-    // src/server.js
-// ... existing imports ...
-const { loadTenantSecrets } = require('../vtu-backend/src/services/tenantConfigService');
-const {connectAllTenantDbs} = require('../vtu-backend/src/services/tenantDbService') // Assume this loads connections
-let server;
-// ...
-const startServer = async () => {
-    // 1. Connect Master DB and load secrets
-    await loadTenantSecrets(); 
-    
-    // 2. Connect all tenant databases (You likely do this to populate req.dbConnections)
-    await connectAllTenantDbs(); 
+// ---------------------------------------------------------------------------
+// Startup sequence (matches documented order):
+//   1. loadTenantSecrets()   — master tenant credentials
+//   2. connectAllTenantDbs() — per-tenant DB connections
+//   3. app.listen()          — only after DBs are ready
+// ---------------------------------------------------------------------------
+(async () => {
+  try {
+    console.log('[BOOT] Loading tenant secrets…');
+    await loadTenantSecrets();
 
-    // ... continue with Express setup
-    
-    // Only start listening once the DB connection is secure
-    server = app.listen(PORT, () => {
-      console.log(`🚀 VTU Server running in ${process.env.NODE_ENV} mode on port ${PORT}`);
+    console.log('[BOOT] Connecting tenant databases…');
+    await connectAllTenantDbs();
+
+    app.listen(PORT, () => {
+      console.log(
+        `[BOOT] OGNetwork backend running on port ${PORT} [${NODE_ENV}]`
+      );
     });
-};
+  } catch (err) {
+    console.error('[BOOT] Fatal startup error — shutting down:', err);
+    process.exit(1);
+  }
+})();
 
-startServer();
-// ...
-
-    // --- HANDLE UNHANDLED PROMISE REJECTIONS ---
-    // Catches async errors outside Express (e.g., DB connection dropped)
-    process.on('unhandledRejection', (err) => {
-      console.error('UNHANDLED REJECTION! 💥 Shutting down gracefully...');
-      console.error(err.name, err.message);
-      // Close server first, then exit process
-      server.close(() => {
-        process.exit(1);
-      });
-    // });
-
-    // --- GRACEFUL SHUTDOWN (SIGTERM) ---
-    // For containerized environments (Docker/Kubernetes)
-    process.on('SIGTERM', () => {
-      console.log('👋 SIGTERM RECEIVED. Shutting down gracefully');
-      server.close(() => {
-        console.log('💥 Process terminated!');
-      });
-    });
-  })
-  // .catch((err) => {
-  //   console.error('MongoDB Connection Error 💥');
-  //   console.error(err);
-  //   // Exit if DB connection fails initially
-  //   process.exit(1);
-  // });
+module.exports = app; // exported for potential testing use

@@ -1,32 +1,67 @@
+'use strict';
+
+// src/routes/adminRoutes.js
+
 const express = require('express');
-const adminController = require('../controllers/adminController');
-const authMiddleware = require('../middleware/authMiddleware');
-
 const router = express.Router();
+const authMiddleware = require('../middleware/authMiddleware');
+const restrictAdmin = require('../middleware/restrictAdmin');
+const adminController = require('../controllers/adminController');
 
-// --- CRITICAL SECURITY ---
-// Apply BOTH protect AND restrictTo middleware.
-// 1. User must be logged in.
-// 2. User must have role 'admin' (or 'superadmin').
-router.use(authMiddleware.protect, authMiddleware.restrictTo('admin', 'superadmin'));
+// All admin routes require authentication + admin role
+router.use(authMiddleware.protect);
+router.use(restrictAdmin);
 
-// --- User Management ---
+// ---------------------------------------------------------------------------
+// Dashboard
+// ---------------------------------------------------------------------------
+router.get('/dashboard', adminController.getDashboard);
 
-// GET /api/v1/admin/users (Supports pagination: ?page=1&limit=20)
-router.get('/users', adminController.getAllUsers);
+// ---------------------------------------------------------------------------
+// User Management
+// ---------------------------------------------------------------------------
+router.get('/users', adminController.getUsers);
+router.patch('/users/:id/status', adminController.toggleUserStatus);
 
-// GET /api/v1/admin/users/:id (Get specific user + their wallet info)
-router.get('/users/:id', adminController.getUserDetails);
+// ---------------------------------------------------------------------------
+// Transactions
+// ---------------------------------------------------------------------------
+router.get('/transactions', adminController.getTransactions);
 
-// PATCH /api/v1/admin/users/:id/ban (Example future endpoint)
-router.patch('/users/:id/ban', adminController.banUser);
+// ---------------------------------------------------------------------------
+// Wallets
+// ---------------------------------------------------------------------------
+router.get('/wallets', adminController.getWallets);
+
+// ---------------------------------------------------------------------------
+// Plan Management
+// ---------------------------------------------------------------------------
+
+// Sync plans from Peyflex
+
+// Get all plans (with pricing info)
+router.get('/plans', adminController.getAllPlans);
+
+router.post('/plans/sync-plans', adminController.syncPlans);
+router.post('/plans/sync/data', adminController.syncDataPlans);
+router.post('/plans/sync/cable', adminController.syncCablePlans);
+router.post('/plans/sync/electricity', adminController.syncElectricityPlans);
 
 
-// --- Transaction Monitoring ---
 
-// GET /api/v1/admin/transactions (Supports filtering & pagination)
-// Example: /api/v1/admin/transactions?status=failed&type=airtime
-router.get('/transactions', adminController.getAllTransactions);
+// Get summary (counts by service)
+router.get('/plans/summary', adminController.getPlansSummary);
 
+// Update single plan price
+router.patch('/plans/:id', adminController.updatePlanPrice);
+
+// Bulk update plan prices
+router.post('/plans/bulk-update', adminController.bulkUpdatePrices);
+
+// ---------------------------------------------------------------------------
+// Airtime Profit Config
+// ---------------------------------------------------------------------------
+router.get('/config/airtime-profit', adminController.getAirtimeProfitConfig);
+router.patch('/config/airtime-profit', adminController.updateAirtimeProfitConfig);
 
 module.exports = router;

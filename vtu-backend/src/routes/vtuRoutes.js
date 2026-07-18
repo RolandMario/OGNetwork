@@ -1,43 +1,50 @@
-const express = require('express');
-// Assuming vtuController exists based on earlier conceptual design
-const asyncHandler = fn => (req, res, next) => {
-    Promise.resolve(fn(req, res, next)).catch(next);
-};
+'use strict';
+
+// src/routes/vtuRoutes.js
+
+const express       = require('express');
+const router        = express.Router();
+const { protect }   = require('../middleware/authMiddleware');
+const verifyPin     = require('../middleware/verifyPin');
 const vtuController = require('../controllers/vtuController');
-const authMiddleware = require('../middleware/authMiddleware');
-const tenantMiddleware = require('../middleware/tenantMiddleware')
 
-const router = express.Router();
+// All VTU routes require authentication
+router.use(protect);
 
-// Apply 'protect' middleware to ALL routes in this file.
-// A user must be logged in to buy anything.
-router.use(authMiddleware.protect);
-// console.log('middleware protection executed')
-// router.use(tenantMiddleware)
-// --- Airtime ---
-// POST /api/v1/vtu/airtime
-// Body expected: { phone: '08012345678', amount: 500, network: 'mtn' }
-router.post('/airtime',  vtuController.handleAirtimePurchase);
+// ---------------------------------------------------------------------------
+// Plans from DB — user-facing (returns ourPrice)
+// GET /api/v1/vtu/plans?service=data&provider=mtn_gifting_data
+// GET /api/v1/vtu/plans?service=cable&provider=dstv
+// GET /api/v1/vtu/plans?service=electricity
+// ---------------------------------------------------------------------------
+router.get('/plans', vtuController.getPlans);
 
-// --- Data ---
-// POST /api/v1/vtu/data
-// Body expected: { phone: '08012345678', planId: 'mtn-1gb-monthly', network: 'mtn' }
-router.post('/data', vtuController.handleDataPurchase);
+// ---------------------------------------------------------------------------
+// Airtime
+// ---------------------------------------------------------------------------
+router.get('/airtime/networks',   vtuController.getAirtimeNetworks);
+router.post('/airtime/buy',       verifyPin, vtuController.buyAirtime);
 
-router.get('/networks', vtuController.fetchNetworks);
-router.get('/data-plans', vtuController.fetchDataPlans)
-router.get('/airtime-networks', vtuController.getAirtimeDetails)
-// --- Cable TV ---
-// POST /api/v1/vtu/cable
-// Body expected: { smartCardNumber: '1234567890', planId: 'dstv-premium', provider: 'dstv' }
+// ---------------------------------------------------------------------------
+// Data
+// ---------------------------------------------------------------------------
+router.get('/data/networks',        vtuController.getDataNetworks);
+router.get('/data/plans/:network',  vtuController.getDataPlans);     // kept for backward compat
+router.post('/data/buy',            verifyPin, vtuController.buyData);
 
-router.get('/cable-types', vtuController.handleCableTypes)
-router.post('/cable', vtuController.purchaseCable);
-router.get('/cable-packages', vtuController.handleCablePackages)
-router.post('/verify-smartcard-no', vtuController.verifySmartCardNo)
-router.post('/buy-cable', vtuController.purchaseCable)
-// --- Utilities (Lookup) ---
-// GET /api/v1/vtu/lookup/meter?number=12345&provider=ikeja
-router.get('/lookup/meter', vtuController.validateMeterNumber);
+// ---------------------------------------------------------------------------
+// Cable
+// ---------------------------------------------------------------------------
+router.get('/cable/providers',          vtuController.getCableProviders);
+router.get('/cable/plans/:identifier',  vtuController.getCablePlans);   // kept for backward compat
+router.post('/cable/verify',            vtuController.verifyCableIUC);
+router.post('/cable/subscribe',         verifyPin, vtuController.subscribeCable);
+
+// ---------------------------------------------------------------------------
+// Electricity
+// ---------------------------------------------------------------------------
+router.get('/electricity/plans',    vtuController.getElectricityPlans);
+router.get('/electricity/verify',   vtuController.verifyMeter);
+router.post('/electricity/buy',     verifyPin, vtuController.buyElectricity);
 
 module.exports = router;

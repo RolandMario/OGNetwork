@@ -1,184 +1,141 @@
+'use strict';
+
+// src/services/tenantDbService.js
+
 const mongoose = require('mongoose');
-const dbConfig = require('../config/dbConfig');
-const schemas = require('../models/index'); // Import the schema registry from Step 2
+const { getAllTenantSecrets } = require('./tenantConfigService');
 
-// Cache to hold active tenant connections.
-// Key: tenantIdString, Value: Mongoose Connection Object
-const connectionCache = new Map();
+// Model definitions
+const { schema: UserSchema,        modelName: UserModelName        } = require('../models/User');
+const { schema: WalletSchema,      modelName: WalletModelName      } = require('../models/Wallet');
+const { schema: TransactionSchema, modelName: TransactionModelName } = require('../models/Transaction');
+const { schema: ServicePlan,       modelName: ServiceModeName      } = require('../models/ServicePlan');
+const { schema: AdminConfigSchema, modelName: AdminConfigModelName } = require('../models/AdminConfig');
 
-/**
- * Gets an existing connection or creates a new one for a specific tenant ID.
- * @param {string} tenantId - The unique identifier for the tenant (used as DB name)
- * @returns {Promise<mongoose.Connection>}
- */
-const getTenantConnection = async (tenantId) => {
-    // 1. Check cache first
-    if (connectionCache.has(tenantId)) {
-        const conn = connectionCache.get(tenantId);
-        // Ensure connection is healthy (readyState 1 = connected, 2 = connecting)
-        if (conn.readyState === 1 || conn.readyState === 2) {
-            return conn;
-        }
-        // If not healthy, remove from cache and reconnect below
-        console.log(`[Tenant DB] Connection unhealthy for ${tenantId}, reconnecting...`);
-        connectionCache.delete(tenantId);
-    }
+// All tenant-scoped models — add new models here as the project grows
+const TENANT_MODELS = [
+  { schema: UserSchema,        modelName: UserModelName        },
+  { schema: WalletSchema,      modelName: WalletModelName      },
+  { schema: TransactionSchema, modelName: TransactionModelName },
+  { schema: ServicePlan,       modelName: ServiceModeName      },
+  { schema: AdminConfigSchema, modelName: AdminConfigModelName },
+];
 
-    // 2. Construct Tenant-Specific URI
-    // e.g., mongodb+srv://...?retryWrites=true&w=majority becomes
-    //       mongodb+srv://.../tenant_123?retryWrites=true&w=majority
-    const tenantDbName = `vtu_tenant_${tenantId}`;
-    const uriParts = dbConfig.baseUri.split('?');
-    const tenantUri = `${uriParts[0]}${tenantDbName}?${uriParts[1] || ''}`;
-
-    // 3. Create NEW connection instance (crucial: do NOT use mongoose.connect)
-    try {
-        console.log(`[Tenant DB] Creating new connection pool for: ${tenantDbName}`);
-        const conn = await mongoose.createConnection(tenantUri).asPromise();
-
-        // 4. Attach Models to this specific connection instance
-        // We iterate through our schema registry and compile them onto this connection.
-        Object.keys(schemas).forEach((modelKey) => {
-             const schemaObj = schemas[modelKey];
-             // Check if model already compiled on this connection to avoid errors
-             if (!conn.models[modelKey]) {
-                 conn.model(modelKey, schemaObj);
-             }
-        });
-
-        // 5. Handle connection events for robustness
-        conn.on('error', (err) => {
-            console.error(`[Tenant DB Error] ${tenantId}:`, err);
-            connectionCache.delete(tenantId); // Clear from cache on error
-        });
-        conn.on('disconnected', () => {
-            console.log(`[Tenant DB Disconnected] ${tenantId}`);
-            connectionCache.delete(tenantId);
-        });
-
-        // 6. Save to cache and return
-        connectionCache.set(tenantId, conn);
-        return conn;
-
-    } catch (error) {
-        console.error(`[Tenant DB] Failed to connect to ${tenantDbName}`, error);
-        throw error;
-    }
-};
-
-
-const { connectMasterDb } = require('../config/masterDb'); // To get the list of tenants
-
-// A map to store all established tenant connections (Mongoose Connection objects)
+// In-memory connection pool: { [tenantId]: mongoose.Connection }
 const tenantConnections = {};
 
-/**
- * @desc Retrieves a specific Mongoose Connection object by tenantId.
- * @param {string} tenantId - The unique identifier for the tenant.
- * @returns {mongoose.Connection|null}
- */
-const getConnectionByTenantId = (tenantId) => {
-    return tenantConnections[tenantId] || null;
-};
+// ---------------------------------------------------------------------------
+// URI builder
+// ---------------------------------------------------------------------------
+
+function buildTenantUri(dbName) {
+  const base =
+    process.env.MONGODB_BASE_URI ||
+    'mongodb+srv://RolandMario:gzS5dvin2g8MQThj@cluster-vtu.mx2yyag.mongodb.net/?appName=Cluster-vtu';
+
+  if (!base) {
+    throw new Error('[tenantDbService] MONGODB_BASE_URI is not set. Check vtu-backend/.env.');
+  }
+
+  const [baseWithoutQuery, queryString] = base.split('?');
+  const cleanBase = baseWithoutQuery.replace(/\/$/, '');
+  const query = queryString
+    ? `retryWrites=true&w=majority&${queryString}`
+    : 'retryWrites=true&w=majority';
+
+  return `${cleanBase}/${dbName}?${query}`;
+}
+
+// ---------------------------------------------------------------------------
+// Model registration
+// ---------------------------------------------------------------------------
 
 /**
- * @desc Creates and stores a Mongoose connection for a single tenant.
- * @param {string} tenantId - The unique identifier for the tenant (e.g., 'clientA').
- * @param {string} dbName - The database name to connect to (e.g., 'vtu_tenant_clientA_db').
- * @returns {Promise<mongoose.Connection>} The established connection object.
+ * Registers all tenant-scoped models onto a specific connection.
+ * Safe to call multiple times — skips already-registered models.
  */
-const createTenantConnection = async (tenantId, dbName) => {
-    // Check if connection already exists
-    if (tenantConnections[tenantId] && tenantConnections[tenantId].readyState === 1) {
-        console.log(`Tenant DB connection already active for: ${tenantId}`);
-        return tenantConnections[tenantId];
+function registerModelsOnConnection(connection) {
+  for (const { schema, modelName } of TENANT_MODELS) {
+    if (!connection.models[modelName]) {
+      connection.model(modelName, schema);
     }
+  }
+}
 
-    try {
-        // Construct the specific database URI
-        // Note: Assumes the base URI is stored in an environment variable (e.g., MONGODB_BASE_URI)
-        const MONGODB_BASE_URI = process.env.MONGODB_BASE_URI || 'mongodb://localhost:27017/';
-        const dbUri = MONGODB_BASE_URI + dbName;
+// ---------------------------------------------------------------------------
+// Connection management
+// ---------------------------------------------------------------------------
 
-        const tenantConn = await mongoose.createConnection(dbUri, {
-            serverSelectionTimeoutMS: 5000,
-            socketTimeoutMS: 45000,
-            // You may need to remove these if using an older Mongoose version, but they are standard:
-            // useNewUrlParser: true, 
-            // useUnifiedTopology: true,
-        });
+async function connectTenantDb(tenant) {
+  const { tenantId, dbName } = tenant;
 
-        // Attach models to this specific connection instance
-        // This is crucial for multi-tenancy: each connection needs its own set of models
-        tenantConn.model('User', require('../models/User').schema);
-        tenantConn.model('Wallet', require('../models/Wallet').schema);
-        tenantConn.model('Transaction', require('../models/Transaction').schema);
-        
-        // Store the successful connection
-        tenantConnections[tenantId] = tenantConn;
-        console.log(`Tenant DB connected: ${tenantId} (${dbName})`);
+  if (tenantConnections[tenantId]) {
+    console.log(`[tenantDbService] Connection for "${tenantId}" already exists — skipping.`);
+    return;
+  }
 
-        return tenantConn;
-    } catch (error) {
-        console.error(`ERROR: Could not connect to tenant DB ${dbName} for ${tenantId}:`, error.message);
-        throw new Error(`Failed to connect tenant DB: ${dbName}`);
-    }
-};
+  const uri = buildTenantUri(dbName);
+  const connection = await mongoose.createConnection(uri).asPromise();
 
-/**
- * @desc CORE FUNCTION: Fetches all tenants from the Master DB and connects to each one.
- * @returns {Promise<void>}
- */
-const connectAllTenantDbs = async () => {
-    try {
-        const masterDb = await connectMasterDb();
-        // Get the MasterTenant model from the master connection instance
-        const MasterTenant = masterDb.model('MasterTenant'); 
+  registerModelsOnConnection(connection);
 
-        // 1. Fetch all tenants from the Master DB
-        const tenants = await MasterTenant.find({}).select('tenantId dbName');
+  tenantConnections[tenantId] = connection;
 
-        if (tenants.length === 0) {
-            console.warn("No tenants found in the Master DB to connect to.");
-            return;
-        }
+  console.log(
+    `[tenantDbService] Connected "${tenantId}" -> "${dbName}" | ` +
+    `Models: [${Object.keys(connection.models).join(', ')}]`
+  );
+}
 
-        const connectionPromises = tenants.map(tenant => 
-            createTenantConnection(tenant.tenantId, tenant.dbName)
-        );
+async function connectAllTenantDbs() {
+  const tenants = Object.values(getAllTenantSecrets());
 
-        // 2. Execute all connections concurrently
-        await Promise.all(connectionPromises);
+  if (!tenants.length) {
+    console.warn(
+      '[tenantDbService] No tenants found — skipping tenant DB connections. ' +
+      'Seed at least one document into the Master DB "tenants" collection.'
+    );
+    return;
+  }
 
-        console.log(`\n✅ SUCCESSFULLY connected to ${tenants.length} tenant databases.\n`);
+  console.log(`[tenantDbService] Opening connections for ${tenants.length} tenant(s)…`);
+  await Promise.all(tenants.map(connectTenantDb));
+  console.log('[tenantDbService] All tenant DB connections established.');
+}
 
-    } catch (error) {
-        console.error("FATAL ERROR during connectAllTenantDbs execution:", error.message);
-        throw error; // Re-throw to crash the server if this critical step fails
-    }
-};
+// ---------------------------------------------------------------------------
+// Runtime lookups
+// ---------------------------------------------------------------------------
 
 /**
- * @desc Close all active tenant connections. Used during server shutdown.
+ * Returns the cached mongoose connection for a tenant.
+ * Throws a typed error if tenant is unknown — caught by tenantMiddleware.
  */
-const closeAllTenantConnections = async () => {
-    const closePromises = Object.values(tenantConnections).map(conn => {
-        if (conn && conn.readyState === 1) { // Check if connection exists and is open
-            return conn.close();
-        }
-        return Promise.resolve();
-    });
+function getTenantConnection(tenantId) {
+  const connection = tenantConnections[tenantId];
 
-    await Promise.all(closePromises);
-    console.log("All tenant connections closed.");
-};
+  if (!connection) {
+    const err = new Error(
+      `[tenantDbService] No connection found for tenant "${tenantId}". ` +
+      'Ensure this tenant exists in the Master DB and the server has been restarted.'
+    );
+    err.statusCode = 404;
+    throw err;
+  }
 
+  return connection;
+}
+
+const getTenantDb = getTenantConnection; // alias
+
+function getAllTenantConnections() {
+  return { ...tenantConnections };
+}
 
 module.exports = {
-    connectAllTenantDbs, // <-- Exported for server.js
-    getConnectionByTenantId, // <-- Exported for webhook and standard middleware
-    closeAllTenantConnections, // <-- Exported for shutdown handler
-    createTenantConnection, // Helper, useful for testing
-    getTenantConnection
+  connectAllTenantDbs,
+  connectTenantDb,
+  getTenantConnection,
+  getTenantDb,
+  getAllTenantConnections,
 };
-

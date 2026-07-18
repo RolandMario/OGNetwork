@@ -1,30 +1,53 @@
-const express = require('express');
-const walletController = require('../controllers/walletController');
-const authMiddleware = require('../middleware/authMiddleware');
+'use strict';
+
+// src/routes/userRoutes.js
+
+const express               = require('express');
+const router                = express.Router();
+const authMiddleware        = require('../middleware/authMiddleware');
+const walletController      = require('../controllers/walletController');
+const authController        = require('../controllers/authController');
+const userController        = require('../controllers/userController');
 const transactionController = require('../controllers/transactionController');
-const userController = require('../controllers/userController');
-const authController = require('../controllers/authController')
+const notificationController = require('../controllers/notificationController');
 
-const router = express.Router();
-
-// Apply 'protect' middleware to ALL routes in this file
+// Apply protect to ALL routes in this file
 router.use(authMiddleware.protect);
 
-// --- Wallet Endpoints ---
+// ---------------------------------------------------------------------------
+// Wallet
+// ---------------------------------------------------------------------------
+router.get('/wallet/balance',  walletController.getWallet);
+router.post('/wallet/fund',    walletController.initiateFunding);
+router.post('/wallet/verify',  walletController.verifyFunding);
 
-// GET /api/v1/user/wallet/balance
-router.get('/wallet/balance',  walletController.getBalance);
-router.get('dashboard/data', userController.getDashboardData)
+// Dedicated Virtual Account (DVA) — bank transfer funding
+router.get('/wallet/account-details',     walletController.getAccountDetails);
+router.post('/wallet/provision-account',  authController.retryProvisionDedicatedAccount);
 
-// POST /api/v1/user/wallet/fund (Initiate payment)
-router.post('/wallet/fund', walletController.initiateFunding);
-router.post('/wallet/verify', walletController.verifyFunding)
-router.post('/set-transaction-pin', userController.setTransactionPin);
-router.patch('/update-transaction-pin', userController.updateTransactionPin)
-
-// --- Other User Endpoints (Examples for future expansion) ---
-router.get('/transactions/my-history', transactionController.getMyHistory);
-router.patch('/profile/update', userController.updateProfile);
+// ---------------------------------------------------------------------------
+// Auth
+// ---------------------------------------------------------------------------
 router.patch('/update-password', authController.updatePassword);
+
+// ---------------------------------------------------------------------------
+// User profile & PIN
+// ---------------------------------------------------------------------------
+router.get('/dashboard/data',            userController.getDashboardData);
+router.post('/set-transaction-pin',      userController.setTransactionPin);
+router.patch('/update-transaction-pin',  userController.updateTransactionPin);
+router.patch('/profile/update',          userController.updateProfile);
+
+// ---------------------------------------------------------------------------
+// Transactions
+// ---------------------------------------------------------------------------
+router.get('/transactions/my-history', transactionController.getMyHistory);
+
+// ---------------------------------------------------------------------------
+// Push Notifications
+// ---------------------------------------------------------------------------
+router.post('/notifications/register',   notificationController.registerToken);
+router.post('/notifications/unregister', notificationController.unregisterToken);
+router.post('/notifications/test',       notificationController.sendTestNotification);
 
 module.exports = router;

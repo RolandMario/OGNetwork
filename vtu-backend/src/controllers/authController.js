@@ -1,256 +1,326 @@
-const mongoose = require('mongoose');
+'use strict';
+
+// src/controllers/authController.js
+
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-// const User = require('../models/User');
-// const Wallet = require('../models/Wallet');
+const paymentService = require('../services/paymentService');
+const { getTenantSecret } = require('../services/tenantConfigService');
 
-// Helper function to generate JWT Token
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
 const signToken = (id) => {
+  if (!process.env.JWT_SECRET) {
+    console.error('[authController] CRITICAL: JWT_SECRET environment variable is not set!');
+    throw new Error('Server configuration error: JWT_SECRET is not set.');
+  }
   return jwt.sign({ id }, process.env.JWT_SECRET, {
     expiresIn: process.env.JWT_EXPIRES_IN || '1d',
   });
 };
 
-// Helper to send token response
 const createSendToken = (user, statusCode, res) => {
   const token = signToken(user._id);
-
-  // Remove password from output
   user.password = undefined;
 
   res.status(statusCode).json({
     status: 'success',
     token,
-    data: {
-      user,
-    },
+    data: { user },
   });
 };
 
+// ---------------------------------------------------------------------------
+// Helper — create Paystack customer + Dedicated Virtual Account
+//
+// This is BEST-EFFORT and must NEVER block registration.
+// If Paystack isn't KYC-verified yet, this silently fails and
+// dedicatedAccount.active stays false. The wallet still works via
+// the existing initiateFunding (checkout link) flow regardless.
+// ---------------------------------------------------------------------------
+
+async function provisionDedicatedAccount({ user, tenantId, User }) {
+  try {
+    const secretKey = getTenantSecret(tenantId)?.paystackSecretKey;
+
+    if (!secretKey) {
+      console.warn(`[DVA] No Paystack secret key for tenant "${tenantId}" — skipping DVA provisioning.`);
+      return;
+    }
+
+    // Split fullName into first/last for Paystack customer record
+    const nameParts = user.fullName.trim().split(/\s+/);
+    const firstName = nameParts[0];
+    const lastName  = nameParts.slice(1).join(' ') || nameParts[0];
+
+    // 1. Create Paystack customer
+    const customer = await paymentService.createCustomer({
+      email:     user.email,
+      firstName,
+      lastName,
+      phone:     user.phone,
+      secretKey,
+    });
+
+    console.log(`[DVA] Paystack customer created: ${customer.customerCode} for user ${user._id}`);
+
+    // 2. Create Dedicated Virtual Account for that customer
+    const dva = await paymentService.createDedicatedAccount({
+      customerCode: customer.customerCode,
+      secretKey,
+    });
+
+    console.log(`[DVA] Dedicated account assigned: ${dva.accountNumber} (${dva.bankName}) for user ${user._id}`);
+
+    // 3. Persist on user document
+    await User.findByIdAndUpdate(user._id, {
+      paystackCustomerCode: customer.customerCode,
+      dedicatedAccount: {
+        accountNumber:     dva.accountNumber,
+        accountName:       dva.accountName,
+        bankName:          dva.bankName,
+        bankId:            dva.bankId,
+        bankSlug:          dva.bankSlug,
+        active:            true,
+        paystackAccountId: dva.accountId,
+      },
+    });
+
+  } catch (error) {
+    // Don't throw — registration must succeed even if DVA provisioning fails.
+    // Common cause: business not KYC-verified yet (test mode / pending approval).
+    console.warn(
+      `[DVA] Provisioning failed for user ${user._id} (non-blocking): ${error.message}`
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Register
+// ---------------------------------------------------------------------------
+
 /**
- * @desc    Register a new user & create their wallet atomically
+ * @desc    Register a new user, create their wallet, and (best-effort)
+ *          provision a Paystack Dedicated Virtual Account.
  * @route   POST /api/v1/auth/register
  * @access  Public
  */
-// exports.register = async (req, res, next) => {
-//   const session = await mongoose.startSession();
-//   session.startTransaction();
+exports.register = async (req, res) => {
+  const { fullName, email, phone, password } = req.body;
+  const User   = req.models.User;
+  const Wallet = req.models.Wallet;
+  const tenantId = req.headers['x-tenant-id'];
 
-//   console.log('auth controller started')
+  console.log('=== REGISTRATION DEBUG ===');
+  console.log('Tenant ID from header :', tenantId);
+  console.log('DB name               :', req.dbConnection?.name ?? 'Unknown');
+  console.log('Registering           :', { email, phone });
 
-//   try {
-//     const { fullName, email, phone, password } = req.body;
-
-//     // 1. Check if user exists
-//     const existingUser = await User.findOne({ $or: [{ email }, { phone }] }).session(session);
-//     if (existingUser) {
-//        await session.abortTransaction();
-//        session.endSession();
-//        return res.status(400).json({ message: 'Email or Phone already exists' });
-//     }
-// console.log('new member verified')
-//     // 2. Create User
-//     // Note: Password hashing happens in the User model pre-save hook
-//     const newUser = await User.create([{
-//       fullName,
-//       email,
-//       phone,
-//       password,
-//     }], { session });
-// console.log('User created successfully')
-//     // 3. Create Wallet for the new user
-//     await Wallet.create([{
-//       user: newUser[0]._id,
-//       balance: 0, // Always start with 0
-//     }], { session });
-// console.log('wallet created succefully')
-//     // 4. Commit transaction
-//     await session.commitTransaction();
-//     session.endSession();
-// console.log('execution completed')
-//     // 5. Send response with token
-//     createSendToken(newUser[0], 201, res);
-// console.log('user signed')
-//   } catch (error) {
-//     await session.abortTransaction();
-//     session.endSession();
-//     // Pass to global error handler (assuming one exists), or handle here:
-//     res.status(500).json({ status: 'error', message: error.message });
-//   }
-// };
-
-
-exports.register = async (req, res, next) => {
-  // FIX 1: Start session on the specific tenant connection, NOT the global mongoose object
-  const session = await req.dbConnection.startSession();
+  let createdUser = null;
 
   try {
-    let newUser; // Variable to hold the user created inside the transaction scope
+    // 1. Duplicate check
+    const existing = await User.findOne({ $or: [{ email }, { phone }] });
+    if (existing) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Email or phone number already registered.',
+      });
+    }
 
-    await session.withTransaction(async () => {
-      const { fullName, email, phone, password } = req.body;
-      const User = req.models.User;
-      const Wallet = req.models.Wallet;
+    // 2. Create user (password hashed by pre-save hook)
+    createdUser = await User.create({ fullName, email, phone, password });
+    console.log('User saved — _id:', createdUser._id);
 
-      // 1. Check if user exists
-      const existingUser = await User.findOne({ $or: [{ email }, { phone }] }).session(session);
-      
-      if (existingUser) {
-        // Create a specific error so we can return 400 instead of 500 later
-        const error = new Error('Email or Phone already exists');
-        error.statusCode = 400; 
-        throw error;
-      }
+    // 3. Create wallet linked to user
+    await Wallet.create({ user: createdUser._id, balance: 0 });
+    console.log('Wallet saved for user:', createdUser._id);
 
-      // 2. Create User
-      // Note: Passing { session } ensures this operation is part of the transaction
-      const [user] = await User.create([{
-        fullName,
-        email,
-        phone,
-        password,
-      }], { session });
+    // 4. Respond immediately — don't make the user wait for Paystack
+    createSendToken(createdUser, 201, res);
 
-      // 3. Create Wallet
-      await Wallet.create([{
-        user: user._id,
-        balance: 0,
-      }], { session });
-      
-      // Assign to the outer variable so we can use it after the transaction commits
-      newUser = user; 
+    // 5. Provision DVA in the background (best-effort, non-blocking).
+    //    The response has already been sent above.
+    setImmediate(() => {
+      provisionDedicatedAccount({ user: createdUser, tenantId, User });
     });
-
-    // FIX 2: Send response HERE, after the transaction has fully committed.
-    // If we send it inside withTransaction, the response might go out even if the commit fails.
-    createSendToken(newUser, 201, res);
 
   } catch (error) {
-    console.error("Registration Transaction failed:", error.message);
-    
-    // FIX 3: Better error handling
-    // If we marked the error as 400 (Client Error), send that. Otherwise send 500.
+    console.error('Registration error:', error.message);
+
+    // If user was saved but wallet creation failed, clean up the orphaned user
+    // so the client can safely retry without hitting the duplicate-check above.
+    if (createdUser) {
+      try {
+        await User.findByIdAndDelete(createdUser._id);
+        console.warn('Rolled back user after wallet creation failure:', createdUser._id);
+      } catch (rollbackErr) {
+        console.error('Rollback failed — orphaned user:', createdUser._id, rollbackErr.message);
+      }
+    }
+
     const statusCode = error.statusCode || 500;
-    
-    res.status(statusCode).json({ 
-        status: 'error', 
-        message: error.message || 'Registration failed due to a system error.' 
+    res.status(statusCode).json({
+      status: 'error',
+      message: error.message || 'Registration failed. Please try again.',
     });
-  } finally {
-    // Always end the session to release the connection back to the pool
-    session.endSession();
   }
 };
+
+// ---------------------------------------------------------------------------
+// Login
+// ---------------------------------------------------------------------------
 
 /**
  * @desc    Login user
  * @route   POST /api/v1/auth/login
  * @access  Public
  */
-exports.login = async (req, res, next) => {
+exports.login = async (req, res) => {
   try {
     const { emailOrPhone, password } = req.body;
     const User = req.models.User;
-    // 1. Check if email/phone and password exist
+
     if (!emailOrPhone || !password) {
-      return res.status(400).json({ message: 'Please provide email/phone and password' });
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Please provide email/phone and password.',
+      });
     }
 
-    // 2. Check if user exists && password is correct
-    // We must explicitly select the password field as it's set to select:false in schema
     const user = await User.findOne({
-        $or: [{ email: emailOrPhone.toLowerCase() }, { phone: emailOrPhone }]
+      $or: [
+        { email: emailOrPhone.toLowerCase() },
+        { phone: emailOrPhone },
+      ],
     }).select('+password');
 
     if (!user || !(await user.correctPassword(password, user.password))) {
-      return res.status(401).json({ message: 'Incorrect email/phone or password' });
+      return res.status(401).json({
+        status: 'fail',
+        message: 'Incorrect email/phone or password.',
+      });
     }
 
-    // 3. If everything ok, send token to client
     createSendToken(user, 200, res);
   } catch (error) {
+    console.error('Login error:', error.message);
     res.status(500).json({ status: 'error', message: error.message });
   }
 };
 
+// ---------------------------------------------------------------------------
+// Get current user
+// ---------------------------------------------------------------------------
+
 /**
- * @desc    Get current logged in user data
+ * @desc    Get logged-in user profile
  * @route   GET /api/v1/auth/me
- * @access  Private (Requires protect middleware)
+ * @access  Private
  */
-exports.getMe = async (req, res, next) => {
+exports.getMe = async (req, res) => {
   try {
     const User = req.models.User;
-    // req.user.id comes from the 'protect' middleware
     const user = await User.findById(req.user.id);
-    
-    // Optional: also fetch wallet balance here if needed often
-    // const wallet = await Wallet.findOne({ user: req.user.id });
 
     res.status(200).json({
       status: 'success',
-      data: {
-        user,
-        // balance: wallet ? wallet.balance / 100 : 0 // Convert back to major unit
-      },
+      data: { user },
     });
   } catch (error) {
+    console.error('getMe error:', error.message);
     res.status(500).json({ status: 'error', message: error.message });
   }
 };
 
-
-// src/controllers/authController.js
-
-// ... keep existing imports (User, Wallet, jwt, bcrypt) ...
-// ... keep existing helpers (signToken, createSendToken) ...
-// ... keep existing controllers (register, login, getMe) ...
-
+// ---------------------------------------------------------------------------
+// Update password
+// ---------------------------------------------------------------------------
 
 /**
- * @desc    Update current user password
- * @route   PATCH /api/v1/user/update-password (defined in userRoutes.js)
+ * @desc    Update password for logged-in user
+ * @route   PATCH /api/v1/user/update-password
  * @access  Private
  */
-exports.updatePassword = async (req, res, next) => {
+exports.updatePassword = async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
     const User = req.models.User;
-    // 1. Check if both passwords exist in body
+
     if (!currentPassword || !newPassword) {
-        return res.status(400).json({ message: 'Please provide your current password and the new password.' });
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Please provide your current password and a new password.',
+      });
     }
 
-    // 2. Get current user from database.
-    // CRITICAL: We must explicitly select '+password' because it is hidden by default in schema.
     const user = await User.findById(req.user.id).select('+password');
 
-    // 3. Check if current password submitted matches the one in DB
-    // Use the helper method defined in the User model
     if (!(await user.correctPassword(currentPassword, user.password))) {
       return res.status(401).json({
-          status: 'fail',
-          message: 'Your current password is incorrect.'
+        status: 'fail',
+        message: 'Your current password is incorrect.',
       });
     }
 
-    // 4. If correct, update password
     user.password = newPassword;
-
-    // 5. Save user document.
-    // CRITICAL: This triggers the pre-save hook in User model to hash the new password.
-    // Do NOT use findByIdAndUpdate here.
     await user.save();
 
-    // 6. Log user in again so front-end doesn't get logged out (send new token)
-    // This is good UX.
     createSendToken(user, 200, res);
+  } catch (error) {
+    console.error('Password update error:', error.message);
+    res.status(500).json({
+      status: 'error',
+      message: 'Could not update password. Please try again.',
+    });
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Retry DVA provisioning
+// ---------------------------------------------------------------------------
+
+/**
+ * @desc    Manually retry Dedicated Virtual Account provisioning.
+ *          Useful if it failed at registration time (e.g. business
+ *          wasn't KYC-verified yet) and is now approved.
+ * @route   POST /api/v1/user/wallet/provision-account
+ * @access  Private
+ */
+exports.retryProvisionDedicatedAccount = async (req, res) => {
+  try {
+    const User = req.models.User;
+    const tenantId = req.headers['x-tenant-id'];
+    const user = await User.findById(req.user.id);
+
+    if (user.dedicatedAccount?.active) {
+      return res.status(200).json({
+        status:  'success',
+        message: 'Dedicated account already provisioned.',
+        data: { dedicatedAccount: user.dedicatedAccount },
+      });
+    }
+
+    await provisionDedicatedAccount({ user, tenantId, User });
+
+    const updated = await User.findById(req.user.id);
+
+    if (!updated.dedicatedAccount?.active) {
+      return res.status(422).json({
+        status:  'fail',
+        message: 'Could not provision dedicated account. Your business may not be KYC-verified on Paystack yet, or this feature is unavailable in test mode.',
+      });
+    }
+
+    res.status(200).json({
+      status: 'success',
+      data: { dedicatedAccount: updated.dedicatedAccount },
+    });
 
   } catch (error) {
-      console.error('Password Update Error', error);
-      res.status(500).json({
-          status: 'error',
-          message: 'Could not update password. Please try again.'
-      });
+    console.error('retryProvisionDedicatedAccount error:', error.message);
+    res.status(500).json({ status: 'error', message: error.message });
   }
 };

@@ -1,197 +1,249 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  SafeAreaView,
-  TouchableOpacity,
-  TextInput,
-  FlatList,
-  Alert,
-  ScrollView,
-  KeyboardAvoidingView,
-  Platform,
-  ActivityIndicator
+  View, Text, StyleSheet, SafeAreaView, TouchableOpacity,
+  TextInput, FlatList, Alert, ScrollView, KeyboardAvoidingView,
+  Platform, ActivityIndicator, StatusBar,
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { useDispatch, useSelector } from 'react-redux';
+
 import { COLORS, SIZES, FONTS, SHADOWS } from '../../constants/theme';
-import TransactionPinModal from '../../components/TransactionPinModal'; // Reusing the component we made
-import axios from 'axios';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import TransactionPinModal from '../../components/TransactionPinModal';
+import apiClient from '../../services/api';
+import { API_ROUTES } from '../../constants/apiRoutes';
+import { updateBalance } from '../../redux/slices/walletSlice';
 
-// --- DUMMY DATA FOR DEMONSTRATION ---
-// In a real app, you fetch this from /api/v1/data-plans?network=MTN
-const DATA_PLANS = [
-  { id: '1', network: 'mtn', category: 'daily', size: '100MB', validity: '1 Day', price: '100', planId: '500' },
-  { id: '2', network: 'mtn', category: 'daily', size: '200MB', validity: '3 Days', price: '200', planId: '501' },
-  { id: '3', network: 'mtn', category: 'weekly', size: '350MB', validity: '7 Days', price: '300', planId: '502' },
-  { id: '4', network: 'mtn', category: 'weekly', size: '750MB', validity: '14 Days', price: '500', planId: '503' },
-  { id: '5', network: 'mtn', category: 'monthly', size: '1.5GB', validity: '30 Days', price: '1000', planId: '504' },
-  { id: '6', network: 'mtn', category: 'monthly', size: '2GB', validity: '30 Days', price: '1200', planId: '505' },
-  { id: '7', network: 'mtn', category: 'xtravalue', size: '4GB + 2k Talk', validity: '30 Days', price: '2000', planId: '506' },
-  { id: '8', network: 'mtn', category: 'favourite', size: '10GB', validity: '30 Days', price: '3000', planId: '507' },
-  // Add other networks...
-];
-
-
-
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
 const NETWORK_COLORS = {
-  mtn: '#FFCC00',      // Yellow
-  glo: '#2ecc71',      // Green
-  airtel: '#e74c3c',   // Red
-  '9mobile': '#006633' // Dark Green
+  mtn_gifting_data: '#FFCC00',
+  glo_data:         '#2ecc71',
+  airtel_data:      '#e74c3c',
+  '9mobile_data':   '#006633',
+  '9mobile_gifting':'#006633',
+  mtn_data_share:   '#FFAA00',
 };
 
-const NETWORK_ID ={
-  mtn:"1",
-  glo:"3",
-  airtel:"2",
-  '9mobile':"4"
+const NETWORK_LABELS = {
+  mtn_gifting_data: 'MTN',
+  glo_data:         'GLO',
+  airtel_data:      'Airtel',
+  '9mobile_data':   '9mobile',
+  '9mobile_gifting':'9mobile+',
+  mtn_data_share:   'MTN Share',
+};
+
+// Derive filter category from plan name
+function getPlanCategory(name = '') {
+  const l = name.toLowerCase();
+  if (l.includes('1day') || l.includes('1 day') || l.includes('2days') || l.includes('2 day')) return 'Daily';
+  if (l.includes('7day') || l.includes('7 day') || l.includes('weekly') || l.includes('week')) return 'Weekly';
+  if (l.includes('month') || l.includes('1month') || l.includes('30')) return 'Monthly';
+  if (l.includes('year') || l.includes('2 month')) return 'Long';
+  return 'Other';
 }
 
-const FILTERS = ['All', 'Favourite', 'Daily', 'Weekly', 'Monthly', 'XtraValue'];
+const FILTERS = ['All', 'Daily', 'Weekly', 'Monthly', 'Long', 'Other'];
 
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
 const BuyDataScreen = ({ navigation }) => {
-  const [selectedNetwork, setSelectedNetwork] = useState('mtn');
-  const [phone, setPhone] = useState('');
-  const [selectedFilter, setSelectedFilter] = useState('All');
-  const [selectedPlan, setSelectedPlan] = useState(null);
-  
+  const dispatch      = useDispatch();
+  const walletBalance = useSelector((state) => state.wallet.balance);
+  const authUser      = useSelector((state) => state.auth.user);
+
+  // Networks are derived from plans — group by provider
+  const [networks,          setNetworks]          = useState([]);
+  const [selectedNetwork,   setSelectedNetwork]   = useState(null);
+  const [allPlans,          setAllPlans]          = useState([]);  // all plans from DB
+  const [selectedPlan,      setSelectedPlan]      = useState(null);
+  const [phone,             setPhone]             = useState('');
+  const [selectedFilter,    setSelectedFilter]    = useState('All');
+
+  const [loadingPlans,      setLoadingPlans]      = useState(true);
   const [isPinModalVisible, setIsPinModalVisible] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [dataPlans, setDataPlans] = useState([])
-  const [networks, setNetworks] = useState({})
+  const [isProcessing,      setIsProcessing]      = useState(false);
+  const [pinError,          setPinError]          = useState('');
 
-
-useEffect(() => {
-  
-  const loadNetworks = async () => {
-    const token = await AsyncStorage.getItem('userToken');
-    const API_URL = 'https://vtu-project.vercel.app'
-    try {
-      const response = await axios.get(`${API_URL}/api/v1/vtu/networks?identifier=${selectedNetwork}`, {
-        headers: { 'Authorization': `Bearer ${token}`, 'x-tenant-id': 'clientA' }
-      });
-      // Update your state with the dynamic networks from the API
-      setNetworks(response.data); 
-    } catch (err) {
-      console.log("Failed to load networks");
+  // Auto-fill phone number from logged-in user's profile
+  useEffect(() => {
+    if (authUser?.phone) {
+      setPhone(authUser.phone);
     }
-  };
-  loadNetworks();
-}, [selectedNetwork]);
+  }, [authUser]);
 
-useEffect(()=>{
+  // ---------------------------------------------------------------------------
+  // Fetch ALL data plans from DB on mount (single call — grouped by provider)
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    const fetchPlans = async () => {
+      setLoadingPlans(true);
+      try {
+        // FIX: single endpoint returns all providers + plans with ourPrice
+        const response = await apiClient.get(
+          `${API_ROUTES.VTU.PLANS}?service=data`
+        );
 
-    const loadDataPlan = async () => {
-    const token = await AsyncStorage.getItem('userToken');
-    const API_URL = 'https://vtu-project.vercel.app'
-    console.log('network_id', NETWORK_ID[selectedNetwork])
-    try {
-      const response = await axios.get(`${API_URL}/api/v1/vtu/data-plans?networkId=${NETWORK_ID[selectedNetwork]}`, {
-        headers: { 'Authorization': `Bearer ${token}`, 'x-tenant-id': 'clientA' }
-      });
-      // Update your state with the dynamic networks from the API
-      setDataPlans(response.data.data); 
-    } catch (err) {
-      console.log("Failed to load networks");
-    }
-  };
-  loadDataPlan();
+        const plans = response.data?.data?.plans || [];
+        setAllPlans(plans);
 
-},[selectedNetwork])
+        // Derive unique networks from plans
+        const seen = new Set();
+        const nets = [];
+        plans.forEach((p) => {
+          if (!seen.has(p.provider)) {
+            seen.add(p.provider);
+            nets.push({ identifier: p.provider });
+          }
+        });
 
-  // Filter Logic
+        setNetworks(nets);
+        if (nets.length) setSelectedNetwork(nets[0].identifier);
+
+      } catch (err) {
+        console.error('[BuyData] Failed to load plans:', err.message);
+        Alert.alert('Error', 'Failed to load data plans. Please try again.');
+      } finally {
+        setLoadingPlans(false);
+      }
+    };
+
+    fetchPlans();
+  }, []);
+
+  // ---------------------------------------------------------------------------
+  // Plans for selected network
+  // ---------------------------------------------------------------------------
+  const networkPlans = useMemo(() => {
+    if (!selectedNetwork) return [];
+    return allPlans.filter((p) => p.provider === selectedNetwork);
+  }, [allPlans, selectedNetwork]);
+
+  // ---------------------------------------------------------------------------
+  // Filter by category
+  // ---------------------------------------------------------------------------
   const filteredPlans = useMemo(() => {
-    return networks.dataPlans?.filter(plan => {
-      const networkMatch = selectedNetwork;
-      const categoryMatch = selectedFilter === 'All' || 
-                            "mtn".toLowerCase() === selectedFilter.toLowerCase();
-      return networkMatch && categoryMatch;
-    });
-  }, [selectedNetwork, selectedFilter]);
+    if (selectedFilter === 'All') return networkPlans;
+    return networkPlans.filter((p) => getPlanCategory(p.planName) === selectedFilter);
+  }, [networkPlans, selectedFilter]);
 
+  // ---------------------------------------------------------------------------
+  // Network switch — reset plan selection
+  // ---------------------------------------------------------------------------
+  const handleNetworkChange = useCallback((identifier) => {
+    setSelectedNetwork(identifier);
+    setSelectedPlan(null);
+    setSelectedFilter('All');
+  }, []);
+
+  // ---------------------------------------------------------------------------
+  // Initiate purchase
+  // ---------------------------------------------------------------------------
   const initiatePurchase = () => {
-    if (phone.length < 11) {
-      Alert.alert("Error", "Please enter a valid phone number");
+    if (!phone || phone.length !== 11) {
+      Alert.alert('Invalid Phone', 'Please enter a valid 11-digit phone number.');
       return;
     }
     if (!selectedPlan) {
-      Alert.alert("Error", "Please select a data plan");
+      Alert.alert('No Plan Selected', 'Please select a data plan.');
       return;
     }
-    // Open PIN Modal
+    // Balance check: ourPrice (Naira) vs walletBalance (Naira)
+    if (selectedPlan.ourPrice > walletBalance) {
+      Alert.alert('Insufficient Balance', `Your wallet balance is ₦${walletBalance.toLocaleString()}.`);
+      return;
+    }
+    setPinError('');
     setIsPinModalVisible(true);
   };
 
-  const handleTransaction = async (pin) => {
-    setIsPinModalVisible(false);
-    setIsLoading(true);
+  // ---------------------------------------------------------------------------
+  // PIN submitted
+  // ---------------------------------------------------------------------------
+  const onPinSubmit = async (pin) => {
+    setIsProcessing(true);
+    setPinError('');
 
     try {
-      const token = await AsyncStorage.getItem('userToken');
-      // Replace with your actual endpoint
-      const response = await axios.post(
-        'https://vtu-project.vercel.app/api/v1/vtu/data',
-        {
-          network: selectedNetwork,
-          phone: phone,
-          planId: selectedPlan.planId,
-          amount: selectedPlan.price,
-          pin: pin 
-        },
-        {
-          headers: { 
-            'Authorization': `Bearer ${token}`,
-            'x-tenant-id': 'clientA'
-          }
-        }
-      );
+      // FIX: no amount in body — backend looks up ourPrice from DB
+      const response = await apiClient.post(API_ROUTES.VTU.BUY_DATA, {
+        network:       selectedNetwork,
+        plan_code:     selectedPlan.planCode,   // FIX: DB field is planCode not plan_code
+        mobile_number: phone,
+        pin,
+      });
 
-      if (response.data.success) {
-        Alert.alert("Success", "Data purchase successful!");
-        navigation.navigate("TransactionSuccess", { receipt: response.data.data });
+      if (response.data?.status === 'success') {
+        setIsPinModalVisible(false);
+
+        if (response.data.data?.newBalance !== undefined) {
+          dispatch(updateBalance(response.data.data.newBalance)); // balance is in Naira
+        }
+
+        Alert.alert(
+          '✅ Data Purchase Successful',
+          `${selectedPlan.planName} sent to ${phone}`,
+          [{ text: 'OK', onPress: () => navigation.goBack() }]
+        );
       }
+
     } catch (error) {
+      console.error('[BuyData] Purchase error:', error.response?.data || error.message);
       const status = error.response?.status;
-      if (status === 401) Alert.alert("Failed", "Incorrect PIN");
-      else if (status === 424) Alert.alert("Failed", "Provider Error (424). Try again later.");
-      else Alert.alert("Error", error.response?.data?.message || "Transaction failed");
+      const msg    = error.response?.data?.message || 'Transaction failed. Please try again.';
+
+      if (status === 403) {
+        setIsPinModalVisible(false);
+        Alert.alert('PIN Required', 'Please set a transaction PIN first.', [
+          { text: 'Set PIN', onPress: () => navigation.navigate('SetPin') },
+        ]);
+      } else if (status === 401 && msg.toLowerCase().includes('pin')) {
+        setPinError('Incorrect PIN. Please try again.');
+      } else {
+        setIsPinModalVisible(false);
+        Alert.alert('Purchase Failed', msg);
+      }
     } finally {
-      setIsLoading(false);
+      setIsProcessing(false);
     }
   };
 
-  const renderPlanCard = ({ item }) => {
-    const isSelected = selectedPlan?.id === item.id;
+  // ---------------------------------------------------------------------------
+  // Plan card
+  // ---------------------------------------------------------------------------
+  const renderPlanCard = useCallback(({ item }) => {
+    const isSelected = selectedPlan?.planCode === item.planCode;
     return (
-      <TouchableOpacity 
+      <TouchableOpacity
         style={[styles.planCard, isSelected && styles.selectedCard]}
         onPress={() => setSelectedPlan(item)}
         activeOpacity={0.7}
       >
-        <View style={styles.planHeader}>
-          <Text style={[styles.planSize, isSelected && styles.selectedText]}>{item.size}</Text>
-        </View>
-        <Text style={[styles.planValidity, isSelected && styles.selectedSubText]}>{item.validity}</Text>
-        <View style={styles.priceTag}>
-          <Text style={[styles.planPrice, isSelected && styles.selectedText]}>₦{item.price}</Text>
-        </View>
+        <Text style={[styles.planLabel, isSelected && styles.selectedText]} numberOfLines={2}>
+          {item.planName}
+        </Text>
+        <Text style={[styles.planPrice, isSelected && styles.selectedPriceText]}>
+          ₦{Number(item.ourPrice).toLocaleString()}
+        </Text>
         {isSelected && (
           <View style={styles.checkIcon}>
-            <Ionicons name="checkmark-circle" size={20} color={COLORS.primary} />
+            <Ionicons name="checkmark-circle" size={18} color={COLORS.primary} />
           </View>
         )}
       </TouchableOpacity>
     );
-  };
+  }, [selectedPlan]);
 
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
   return (
     <SafeAreaView style={styles.container}>
-      { console.log('network data ', networks)}
-     { console.log('network data plans', dataPlans)}
+      <StatusBar barStyle="dark-content" backgroundColor={COLORS.backgroundMain} />
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : null} style={{ flex: 1 }}>
-        
+
         {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity onPress={() => navigation.goBack()}>
@@ -202,32 +254,37 @@ useEffect(()=>{
         </View>
 
         <View style={styles.content}>
+
           {/* Network Selection */}
           <Text style={styles.sectionLabel}>Select Network</Text>
-          <View style={styles.networkContainer}>
-            {networks.data?.map((net) => (
-
-              
-              <TouchableOpacity
-                key={net.id}
-                style={[
-                  styles.networkItem,
-                  selectedNetwork === net.id && { borderColor: NETWORK_COLORS[net.identifier], borderWidth: 2 }
-                ]}
-                onPress={() => setSelectedNetwork(net.identifier)}
-              >
-                <View style={[styles.networkCircle, { backgroundColor: NETWORK_COLORS[net.identifier]||'#FFCC00' }]}>
-                   <Text style={styles.networkInitial}>{net.name[0]}</Text>
-                </View>
-                <Text style={styles.networkName}>{net.name}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
+          {loadingPlans ? (
+            <ActivityIndicator color={COLORS.primary} style={{ marginVertical: 20 }} />
+          ) : (
+            <View style={styles.networkContainer}>
+              {networks.map((net) => {
+                const isSelected = selectedNetwork === net.identifier;
+                const color      = NETWORK_COLORS[net.identifier] || '#888';
+                const label      = NETWORK_LABELS[net.identifier] || net.identifier;
+                return (
+                  <TouchableOpacity
+                    key={net.identifier}
+                    style={[styles.networkItem, isSelected && { borderColor: color, borderWidth: 2 }]}
+                    onPress={() => handleNetworkChange(net.identifier)}
+                  >
+                    <View style={[styles.networkCircle, { backgroundColor: color }]}>
+                      <Text style={styles.networkInitial}>{label[0]}</Text>
+                    </View>
+                    <Text style={styles.networkName}>{label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          )}
 
           {/* Phone Input */}
           <Text style={styles.sectionLabel}>Phone Number</Text>
           <View style={styles.inputContainer}>
-            <MaterialCommunityIcons name="cellphone" size={24} color={COLORS.gray} />
+            <MaterialCommunityIcons name="cellphone" size={24} color={COLORS.textSecondary} />
             <TextInput
               style={styles.input}
               placeholder="08012345678"
@@ -236,10 +293,24 @@ useEffect(()=>{
               value={phone}
               onChangeText={setPhone}
             />
-            <TouchableOpacity onPress={() => {/* Open Contacts */}}>
-              <Ionicons name="people-circle-outline" size={28} color={COLORS.primary} />
+            <TouchableOpacity
+              onPress={() => {
+                if (authUser?.phone) {
+                  setPhone(authUser.phone);
+                } else {
+                  Alert.alert('Phone Not Found', 'Please set your phone number in profile settings.');
+                }
+              }}
+              style={styles.myNumberBtn}
+            >
+              <Text style={styles.myNumberBtnText}>My Number</Text>
             </TouchableOpacity>
           </View>
+
+          {/* Balance hint */}
+          <Text style={styles.balanceHint}>
+            Balance: ₦{walletBalance.toLocaleString('en-NG', { minimumFractionDigits: 2 })}
+          </Text>
 
           {/* Filters */}
           <View style={styles.filterContainer}>
@@ -247,48 +318,51 @@ useEffect(()=>{
               {FILTERS.map((filter) => (
                 <TouchableOpacity
                   key={filter}
-                  style={[
-                    styles.filterTab,
-                    selectedFilter === filter && styles.activeFilterTab
-                  ]}
+                  style={[styles.filterTab, selectedFilter === filter && styles.activeFilterTab]}
                   onPress={() => setSelectedFilter(filter)}
                 >
-                  <Text style={[
-                    styles.filterText,
-                    selectedFilter === filter && styles.activeFilterText
-                  ]}>{filter}</Text>
+                  <Text style={[styles.filterText, selectedFilter === filter && styles.activeFilterText]}>
+                    {filter}
+                  </Text>
                 </TouchableOpacity>
               ))}
             </ScrollView>
           </View>
 
           {/* Plans Grid */}
-          <FlatList
-            data={filteredPlans}
-            keyExtractor={(item) => item.id}
-            renderItem={renderPlanCard}
-            numColumns={3}
-            contentContainerStyle={styles.gridContent}
-            columnWrapperStyle={styles.columnWrapper}
-            showsVerticalScrollIndicator={false}
-            ListEmptyComponent={
-               <Text style={styles.emptyText}>No plans available for this category.</Text>
-            }
-          />
+          {loadingPlans ? (
+            <ActivityIndicator color={COLORS.primary} size="large" style={{ marginTop: 30 }} />
+          ) : (
+            <FlatList
+              data={filteredPlans}
+              keyExtractor={(item) => item.planCode}
+              renderItem={renderPlanCard}
+              numColumns={3}
+              contentContainerStyle={styles.gridContent}
+              columnWrapperStyle={styles.columnWrapper}
+              showsVerticalScrollIndicator={false}
+              ListEmptyComponent={
+                <Text style={styles.emptyText}>No plans available for this category.</Text>
+              }
+            />
+          )}
         </View>
 
-        {/* Footer / Buy Button */}
+        {/* Footer */}
         <View style={styles.footer}>
-          <TouchableOpacity 
-            style={[styles.buyButton, (!selectedPlan || phone.length < 11) && styles.disabledButton]}
+          <TouchableOpacity
+            style={[
+              styles.buyButton,
+              (!selectedPlan || phone.length !== 11) && styles.disabledButton,
+            ]}
             onPress={initiatePurchase}
-            disabled={!selectedPlan || phone.length < 11 || isLoading}
+            disabled={!selectedPlan || phone.length !== 11 || isProcessing}
           >
-            {isLoading ? (
+            {isProcessing ? (
               <ActivityIndicator color="#FFF" />
             ) : (
               <Text style={styles.buyButtonText}>
-                {selectedPlan ? `Pay ₦${selectedPlan.price}` : 'Select a Plan'}
+                {selectedPlan ? `Pay ₦${Number(selectedPlan.ourPrice).toLocaleString()}` : 'Select a Plan'}
               </Text>
             )}
           </TouchableOpacity>
@@ -296,13 +370,13 @@ useEffect(()=>{
 
       </KeyboardAvoidingView>
 
-      {/* Reusing the Pin Modal we created earlier */}
+      {/* PIN Modal */}
       <TransactionPinModal
         isVisible={isPinModalVisible}
         onClose={() => setIsPinModalVisible(false)}
-        // onPinComplete={handleTransaction}
-        amount={selectedPlan?.price}
-        onSubmit={handleTransaction}
+        onSubmit={onPinSubmit}
+        isLoading={isProcessing}
+        error={pinError}
         transactionType="Data Bundle"
       />
     </SafeAreaView>
@@ -310,103 +384,40 @@ useEffect(()=>{
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.backgroundMain },
-  header: { 
-    flexDirection: 'row', 
-    justifyContent: 'space-between', 
-    alignItems: 'center', 
-    padding: 20,
-    backgroundColor: '#FFF' 
-  },
-  headerTitle: { ...FONTS.bold, fontSize: 18 },
-  content: { flex: 1, paddingHorizontal: 20 },
-  sectionLabel: { ...FONTS.bold, fontSize: 14, color: COLORS.gray, marginTop: 15, marginBottom: 10 },
-  
-  // Networks
-  networkContainer: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 },
-  networkItem: { alignItems: 'center', padding: 5, borderRadius: 10 },
-  networkCircle: { width: 50, height: 50, borderRadius: 25, justifyContent: 'center', alignItems: 'center', marginBottom: 5 },
-  networkInitial: { color: '#FFF', fontWeight: 'bold', fontSize: 18 },
-  networkName: { fontSize: 12, color: COLORS.textPrimary },
-
-  // Input
-  inputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFF',
-    borderRadius: SIZES.radius,
-    paddingHorizontal: 15,
-    height: 55,
-    ...SHADOWS.light
-  },
-  input: { flex: 1, marginLeft: 10, fontSize: 16, },
-
-  // Filters
-  filterContainer: { marginTop: 20, marginBottom: 10, height: 40 },
-  filterTab: {
-    paddingHorizontal: 16,
-    paddingVertical: 6,
-    borderRadius: 20,
-    backgroundColor: '#E2E8F0',
-    marginRight: 10,
-    justifyContent: 'center'
-  },
-  activeFilterTab: { backgroundColor: COLORS.primary },
-  filterText: { fontSize: 12, color: COLORS.textPrimary },
-  activeFilterText: { color: '#FFF', fontWeight: 'bold' },
-
-  // Grid
-  gridContent: { paddingBottom: 100, paddingTop: 10 },
-  columnWrapper: { justifyContent: 'space-between' },
-  planCard: {
-    width: '31%',
-    backgroundColor: '#FFF',
-    borderRadius: 12,
-    padding: 10,
-    marginBottom: 15,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#eee',
-    ...SHADOWS.light,
-    position: 'relative'
-  },
-  selectedCard: {
-    borderColor: COLORS.primary,
-    backgroundColor: COLORS.primary, // Or keep white with thick border
-  },
-  planHeader: { marginBottom: 5 },
-  planSize: { fontSize: 16, fontWeight: 'bold', color: COLORS.textPrimary },
-  planValidity: { fontSize: 10, color: COLORS.gray, marginBottom: 8 },
-  priceTag: { backgroundColor: '#F0FDF4', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
-  planPrice: { fontSize: 12, fontWeight: 'bold', color: '#166534' },
-  
-  selectedText: { color: '#FFF' },
-  selectedSubText: { color: '#E2E8F0' },
-  
-  checkIcon: { position: 'absolute', top: 5, right: 5, backgroundColor: '#FFF', borderRadius: 10 },
-  
-  emptyText: { textAlign: 'center', color: COLORS.gray, marginTop: 20 },
-
-  // Footer
-  footer: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: '#FFF',
-    padding: 20,
-    borderTopWidth: 1,
-    borderTopColor: '#EEE'
-  },
-  buyButton: {
-    backgroundColor: COLORS.primary,
-    height: 55,
-    borderRadius: SIZES.radius,
-    justifyContent: 'center',
-    alignItems: 'center'
-  },
-  disabledButton: { backgroundColor: '#CBD5E1' },
-  buyButtonText: { color: '#FFF', fontSize: 16, fontWeight: 'bold' }
+  container:         { flex: 1, backgroundColor: COLORS.backgroundMain },
+  header:            { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 20, backgroundColor: '#FFF' },
+  headerTitle:       { ...FONTS.bold, fontSize: 18 },
+  content:           { flex: 1, paddingHorizontal: 20 },
+  sectionLabel:      { ...FONTS.bold, fontSize: 14, color: COLORS.textSecondary, marginTop: 15, marginBottom: 10 },
+  networkContainer:  { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 10 },
+  networkItem:       { alignItems: 'center', padding: 5, borderRadius: 10, borderWidth: 1, borderColor: 'transparent' },
+  networkCircle:     { width: 50, height: 50, borderRadius: 25, justifyContent: 'center', alignItems: 'center', marginBottom: 5 },
+  networkInitial:    { color: '#FFF', fontWeight: 'bold', fontSize: 18 },
+  networkName:       { fontSize: 11, color: COLORS.textPrimary },
+  inputContainer:    { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', borderRadius: SIZES.radius, paddingHorizontal: 15, height: 55, ...SHADOWS.light },
+  input:             { flex: 1, marginLeft: 10, fontSize: 16 },
+  myNumberBtn:       { backgroundColor: '#E6FFFA', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 15, marginLeft: 8 },
+  myNumberBtnText:   { ...FONTS.medium, fontSize: 12, color: COLORS.accent },
+  balanceHint:       { ...FONTS.regular, fontSize: 12, color: COLORS.textSecondary, textAlign: 'right', marginTop: 6 },
+  filterContainer:   { marginTop: 15, marginBottom: 10, height: 40 },
+  filterTab:         { paddingHorizontal: 16, paddingVertical: 6, borderRadius: 20, backgroundColor: '#E2E8F0', marginRight: 10, justifyContent: 'center' },
+  activeFilterTab:   { backgroundColor: COLORS.primary },
+  filterText:        { fontSize: 12, color: COLORS.textPrimary },
+  activeFilterText:  { color: '#FFF', fontWeight: 'bold' },
+  gridContent:       { paddingBottom: 120, paddingTop: 10 },
+  columnWrapper:     { justifyContent: 'space-between' },
+  planCard:          { width: '31%', backgroundColor: '#FFF', borderRadius: 12, padding: 10, marginBottom: 15, alignItems: 'center', borderWidth: 1, borderColor: '#eee', ...SHADOWS.light, position: 'relative' },
+  selectedCard:      { borderColor: COLORS.primary, backgroundColor: COLORS.primary },
+  planLabel:         { ...FONTS.medium, fontSize: 11, color: COLORS.textPrimary, textAlign: 'center', marginBottom: 6 },
+  planPrice:         { ...FONTS.bold, fontSize: 13, color: COLORS.primary },
+  selectedText:      { color: '#FFF' },
+  selectedPriceText: { color: '#FFF', ...FONTS.bold, fontSize: 13 },
+  checkIcon:         { position: 'absolute', top: 4, right: 4, backgroundColor: '#FFF', borderRadius: 10 },
+  emptyText:         { textAlign: 'center', color: COLORS.textSecondary, marginTop: 20 },
+  footer:            { backgroundColor: '#FFF', padding: 20, borderTopWidth: 1, borderTopColor: '#EEE' },
+  buyButton:         { backgroundColor: COLORS.primary, height: 55, borderRadius: SIZES.radius, justifyContent: 'center', alignItems: 'center' },
+  disabledButton:    { backgroundColor: '#CBD5E1' },
+  buyButtonText:     { color: '#FFF', fontSize: 16, fontWeight: 'bold' },
 });
 
 export default BuyDataScreen;

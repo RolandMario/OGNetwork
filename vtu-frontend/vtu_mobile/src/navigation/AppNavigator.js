@@ -17,13 +17,15 @@ import BuyElectricityScreen from '../screens/main/BuyElectricityScreen';
 import EditProfileScreen from '../screens/main/EditProfileScreen';
 import UpdatePinScreen from '../screens/main/UpdatePinScreen';
 import SetupPinScreen from '../screens/main/SetupPinScreen';
+import UpdatePasswordScreen from '../screens/main/UpdatePasswordScreen';
+import SplashScreen from '../screens/auth/SplashScreen';
 
 const Stack = createNativeStackNavigator();
 
 const AppNavigator = () => {
   return (
-    <Stack.Navigator screenOptions={{ headerShown: false }} initialRouteName="Login">
-      
+    <Stack.Navigator screenOptions={{ headerShown: false }} initialRouteName="Splash">
+      <Stack.Screen name="Splash" component={SplashScreen} />
       {/* Auth Stack */}
       <Stack.Screen name="Login" component={LoginScreen} />
       <Stack.Screen name="Register" component={RegisterScreen} />
@@ -47,6 +49,7 @@ const AppNavigator = () => {
       <Stack.Screen name="EditProfile" component={EditProfileScreen} />
       <Stack.Screen name="UpdatePin" component={UpdatePinScreen} />
       <Stack.Screen name="SetPin" component={SetupPinScreen} />
+      <Stack.Screen name="UpdatePassword" component={UpdatePasswordScreen} />
       
     </Stack.Navigator>
   );

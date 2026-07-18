@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-// import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useDispatch } from 'react-redux';
 import { useUser } from '../../context/userContext';
-import axios from 'axios';
+import apiClient from '../../services/api';
 import {
   View,
   Text,
@@ -12,79 +12,62 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  StatusBar
+  StatusBar,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { COLORS, SIZES, FONTS, SHADOWS } from '../../constants/theme';
 import CustomInput from '../../components/CustomInput';
 import CustomButton from '../../components/CustomButton';
+import { API_ROUTES } from '../../constants/apiRoutes';
+import { loginSuccess, loginFail } from '../../redux/slices/authSlice';
 
 const LoginScreen = ({ navigation }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
- const {login} = useUser()
-// --- CONFIGURATION ---
-  // Ensure this matches your backend setup
-  const API_URL = Platform.OS === 'android' 
-    ? 'https://vtu-project.vercel.app/api/v1/auth/login' 
-    : 'https://vtu-project.vercel.app/api/v1/auth/login';
-  // The ID of the tenant you are testing against
-  const TENANT_ID = 'clientA'; 
+  const { login } = useUser();
+  const dispatch = useDispatch();
+
+  const TENANT_ID = 'demo';
 
   const handleLogin = async () => {
-    // 1. Basic Validation
     if (!email || !password) {
       Alert.alert('Missing Credentials', 'Please enter both email and password.');
       return;
     }
-    
+
     setIsLoading(true);
+    console.log('Attempting login with:', { email, password });
 
     try {
-      // 2. Make the API Request
-      const response = await axios.post(
-        API_URL, 
-        {
-          emailOrPhone:email,
-          password
-        },
-        {
-          // 3. CRITICAL: Pass the Tenant ID in headers
-          headers: {
-            'Content-Type': 'application/json',
-            'x-tenant-id': TENANT_ID 
-          }
-        }
-      );
+      console.log('Sending login request to:', API_ROUTES.AUTH.LOGIN);
+      const response = await apiClient.post(API_ROUTES.AUTH.LOGIN, {
+        emailOrPhone: email,
+        password,
+             });
+console.log('Login Response:', response.data);
+if (response.data.status === 'success') {
+  const token = response.data.token;
+  const user = response.data.data.user;
 
-      console.log('response', response.data.data.user)
-      // Use the context function to update global state and AsyncStorage
-        
-      // 4. Handle Success
-      if (response.data.status === 'success') {
-        const token = response.data.token;
-        const user = response.data.data.user
-        await login(token, user, null, TENANT_ID);
-        // Store the JWT token securely for future API calls
-        // await AsyncStorage.setItem('userToken', token);
-        
-        Alert.alert('Login Successful', 'Welcome to your wallet!');
-        // Replace current screen with the main application flow
-        navigation.replace('MainNavigator'); 
-      }
+  // Save to AsyncStorage — key must match api.js interceptor ('token')
+  await AsyncStorage.setItem('token', token);        // FIX: was 'userToken'
+  await AsyncStorage.setItem('tenantId', TENANT_ID);
 
+  // Update context
+  await login(token, user, null, TENANT_ID);
+
+  // Dispatch to Redux
+  dispatch(loginSuccess({ token, user, tenantId: TENANT_ID }));
+
+  Alert.alert('Login Successful', 'Welcome to your wallet!');
+  navigation.replace('MainNavigator');
+}
     } catch (error) {
-      // 5. Handle Errors
-      console.error('Login Error:', error);
-      
-      let errorMessage = 'Login failed due to a server error.';
-      
-      if (error.response && error.response.data && error.response.data.message) {
-        // Capture specific backend error (e.g., 'Invalid credentials' or 'Account suspended')
-        errorMessage = error.response.data.message;
-      }
-
-      Alert.alert('Login Failed', errorMessage);
+      const errorMessage =
+        error.response?.data?.message || 'Login failed due to a server error.';
+      dispatch(loginFail(errorMessage));
+      console.log('Login Failed', errorMessage);
     } finally {
       setIsLoading(false);
     }
@@ -97,15 +80,17 @@ const LoginScreen = ({ navigation }) => {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.container}
       >
-        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-          
-          {/* Header Section - Navy Background */}
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Header Section */}
           <View style={styles.headerSection}>
             <Text style={styles.headerTitle}>Welcome Back!</Text>
             <Text style={styles.headerSubtitle}>Sign in to continue to your wallet.</Text>
           </View>
 
-          {/* Form Section - White Card */}
+          {/* Form Section */}
           <View style={styles.formCard}>
             <CustomInput
               label="Email Address"
@@ -120,7 +105,6 @@ const LoginScreen = ({ navigation }) => {
               value={password}
               onChangeText={setPassword}
               secureTextEntry
-              keyboardType="numeric"
             />
 
             <TouchableOpacity style={styles.forgotPasswordContainer}>
@@ -131,7 +115,7 @@ const LoginScreen = ({ navigation }) => {
               label="Secure Login"
               onPress={handleLogin}
               isLoading={isLoading}
-              variant="primary" // Uses the Teal accent color
+              variant="primary"
             />
 
             <View style={styles.footerContainer}>
@@ -140,7 +124,6 @@ const LoginScreen = ({ navigation }) => {
                 <Text style={styles.footerActionText}>Register Now</Text>
               </TouchableOpacity>
             </View>
-
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -151,7 +134,7 @@ const LoginScreen = ({ navigation }) => {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: COLORS.primary, // Top half navy
+    backgroundColor: COLORS.primary,
   },
   container: {
     flex: 1,
@@ -183,9 +166,10 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 30,
     borderTopRightRadius: 30,
     paddingHorizontal: SIZES.padding,
+    paddingBottom: SIZES.padding * 2,
     paddingTop: SIZES.padding * 2,
-    marginTop: -SIZES.padding, // Overlap the header slightly
-    ...SHADOWS.medium, // Subtle shadow where card meets header
+    marginTop: -SIZES.padding,
+    ...SHADOWS.medium,
   },
   forgotPasswordContainer: {
     alignSelf: 'flex-end',
@@ -209,7 +193,7 @@ const styles = StyleSheet.create({
   },
   footerActionText: {
     ...FONTS.bold,
-    color: COLORS.primary, // Or use accent color here depending on preference
+    color: COLORS.primary,
     fontSize: SIZES.body1,
   },
 });

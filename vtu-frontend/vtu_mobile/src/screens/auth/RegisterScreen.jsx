@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import axios from 'axios';
 import {
   View,
   Text,
@@ -11,33 +10,29 @@ import {
   Platform,
   ScrollView,
   StatusBar,
-  
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useDispatch } from 'react-redux';
+
 import { COLORS, SIZES, FONTS, SHADOWS } from '../../constants/theme';
 import CustomInput from '../../components/CustomInput';
 import CustomButton from '../../components/CustomButton';
+import apiClient from '../../services/api';
+import { API_ROUTES } from '../../constants/apiRoutes';
+import { loginSuccess } from '../../redux/slices/authSlice';
+
+const TENANT_ID = 'demo';
 
 const RegisterScreen = ({ navigation }) => {
-  const [fullName, setFullName] = useState('');
-  const [email, setEmail] = useState('');
-  const [phone, setPhone] = useState('');
-  const [password, setPassword] = useState('');
+  const dispatch = useDispatch();
+
+  const [fullName,  setFullName]  = useState('');
+  const [email,     setEmail]     = useState('');
+  const [phone,     setPhone]     = useState('');
+  const [password,  setPassword]  = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-
-  // --- CONFIGURATION ---
-  // If Android Emulator: use 'http://10.0.2.2:5000'
-  // If iOS Simulator: use 'http://localhost:5000'
-  // If Physical Device: use 'http://YOUR_PC_IP:5000'
-  const API_URL = Platform.OS === 'android' 
-    ? 'https://vtu-project.vercel.app/api/v1/auth/register' 
-    : 'https://vtu-project.vercel.app/api/v1/auth/register';
-
-  // The ID of the tenant you want to connect to
-  const TENANT_ID = 'clientA'; 
-
   const handleRegister = async () => {
-    // 1. Basic Validation
     if (!fullName || !email || !phone || !password) {
       Alert.alert('Missing Info', 'Please fill in all fields to continue.');
       return;
@@ -46,50 +41,35 @@ const RegisterScreen = ({ navigation }) => {
     setIsLoading(true);
 
     try {
-      // 2. Make the API Request
-      const response = await axios.post(
-        API_URL, 
-        {
-          fullName,
-          email,
-          phone,
-          password
-        },
-        {
-          // 3. CRITICAL: Pass the Tenant ID in headers
-          headers: {
-            'Content-Type': 'application/json',
-            'x-tenant-id': TENANT_ID 
-          }
-        }
-      );
+      const response = await apiClient.post(API_ROUTES.AUTH.REGISTER, {
+        fullName,
+        email,
+        phone,
+        password,
+      });
 
-      // 4. Handle Success
-      // Assuming your backend returns { status: 'success', ... }
       if (response.data.status === 'success') {
-        Alert.alert(
-          'Registration Successful', 
-          'Your account has been created. Please log in.',
-          [
-            { text: 'OK', onPress: () => navigation.navigate('Login') }
-          ]
-        );
+        const { token, data: { user } } = response.data;
+
+        // 1. Persist token and tenantId so interceptor picks them up
+        await AsyncStorage.setItem('token', token);
+        await AsyncStorage.setItem('tenantId', TENANT_ID);
+
+        // 2. Update Redux auth state
+        dispatch(loginSuccess({ token, user, tenantId: TENANT_ID }));
+
+        // 3. Go straight to SetPin — user must set PIN before purchasing
+        //    Use 'replace' so the back button doesn't return to Register
+        navigation.replace('SetPin');
       }
 
     } catch (error) {
-      // 5. Handle Errors
-      console.error(error);
-      
-      let errorMessage = 'Something went wrong. Please try again.';
-      
-      // Extract message from backend response if available
-      if (error.response && error.response.data && error.response.data.message) {
-        errorMessage = error.response.data.message;
-      } else if (error.message) {
-        errorMessage = error.message;
-      }
-
-      Alert.alert('Registration Failed', errorMessage);
+      console.error('[Register] error:', error.response?.data || error.message);
+      const msg =
+        error.response?.data?.message ||
+        error.message ||
+        'Something went wrong. Please try again.';
+      Alert.alert('Registration Failed', msg);
     } finally {
       setIsLoading(false);
     }
@@ -103,18 +83,17 @@ const RegisterScreen = ({ navigation }) => {
         style={styles.container}
       >
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-          
-          {/* Header Section - Navy Background */}
+
+          {/* Header */}
           <View style={styles.headerSection}>
-            {/* Optional Back button if not the very first screen */}
-             <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-                 <Text style={styles.backButtonText}>← Back to Login</Text>
-             </TouchableOpacity>
+            <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+              <Text style={styles.backButtonText}>← Back to Login</Text>
+            </TouchableOpacity>
             <Text style={styles.headerTitle}>Create Account</Text>
             <Text style={styles.headerSubtitle}>Start your journey to seamless VTU.</Text>
           </View>
 
-          {/* Form Section - White Card */}
+          {/* Form */}
           <View style={styles.formCard}>
             <CustomInput
               label="Full Name"
@@ -122,7 +101,7 @@ const RegisterScreen = ({ navigation }) => {
               value={fullName}
               onChangeText={setFullName}
             />
-             <CustomInput
+            <CustomInput
               label="Phone Number"
               placeholder="08012345678"
               value={phone}
@@ -138,20 +117,19 @@ const RegisterScreen = ({ navigation }) => {
             />
             <CustomInput
               label="Password"
-              placeholder="Create secure password"
+              placeholder="Create a secure password"
               value={password}
               onChangeText={setPassword}
               secureTextEntry
             />
-             {/* A confirm password field should also be here in production */}
 
             <View style={{ marginTop: SIZES.padding }}>
-                <CustomButton
+              <CustomButton
                 label="Create My Account"
                 onPress={handleRegister}
                 isLoading={isLoading}
                 variant="primary"
-                />
+              />
             </View>
 
             <View style={styles.footerContainer}>
@@ -160,8 +138,8 @@ const RegisterScreen = ({ navigation }) => {
                 <Text style={styles.footerActionText}>Sign In</Text>
               </TouchableOpacity>
             </View>
-
           </View>
+
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -169,68 +147,18 @@ const RegisterScreen = ({ navigation }) => {
 };
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: COLORS.primary,
-  },
-  container: {
-    flex: 1,
-  },
-  scrollContent: {
-    flexGrow: 1,
-  },
-  headerSection: {
-    backgroundColor: COLORS.primary,
-    paddingHorizontal: SIZES.padding,
-    paddingTop: SIZES.padding * 1,
-    paddingBottom: SIZES.padding * 3,
-    justifyContent: 'flex-end',
-  },
-  backButton: {
-      marginBottom: SIZES.padding,
-  },
-  backButtonText: {
-      ...FONTS.medium,
-      color: COLORS.textWhite,
-      opacity: 0.8
-  },
-  headerTitle: {
-    ...FONTS.bold,
-    fontSize: SIZES.h1,
-    color: COLORS.textWhite,
-    marginBottom: 8,
-  },
-  headerSubtitle: {
-    ...FONTS.regular,
-    fontSize: SIZES.body1,
-    color: 'rgba(255,255,255,0.7)',
-  },
-  formCard: {
-    flex: 1,
-    backgroundColor: COLORS.backgroundMain,
-    borderTopLeftRadius: 30,
-    borderTopRightRadius: 30,
-    paddingHorizontal: SIZES.padding,
-    paddingTop: SIZES.padding * 2,
-    marginTop: -SIZES.padding,
-    ...SHADOWS.medium,
-  },
-  footerContainer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    marginTop: SIZES.padding,
-    marginBottom: SIZES.padding * 2,
-  },
-  footerText: {
-    ...FONTS.regular,
-    color: COLORS.textSecondary,
-    fontSize: SIZES.body1,
-  },
-  footerActionText: {
-    ...FONTS.bold,
-    color: COLORS.primary,
-    fontSize: SIZES.body1,
-  },
+  safeArea:       { flex: 1, backgroundColor: COLORS.primary },
+  container:      { flex: 1 },
+  scrollContent:  { flexGrow: 1 },
+  headerSection:  { backgroundColor: COLORS.primary, paddingHorizontal: SIZES.padding, paddingTop: SIZES.padding, paddingBottom: SIZES.padding * 3, justifyContent: 'flex-end' },
+  backButton:     { marginBottom: SIZES.padding },
+  backButtonText: { ...FONTS.medium, color: COLORS.textWhite, opacity: 0.8 },
+  headerTitle:    { ...FONTS.bold, fontSize: SIZES.h1, color: COLORS.textWhite, marginBottom: 8 },
+  headerSubtitle: { ...FONTS.regular, fontSize: SIZES.body1, color: 'rgba(255,255,255,0.7)' },
+  formCard:       { flex: 1, backgroundColor: COLORS.backgroundMain, borderTopLeftRadius: 30, borderTopRightRadius: 30, paddingHorizontal: SIZES.padding, paddingTop: SIZES.padding * 2, marginTop: -SIZES.padding, ...SHADOWS.medium },
+  footerContainer:{ flexDirection: 'row', justifyContent: 'center', marginTop: SIZES.padding, marginBottom: SIZES.padding * 2 },
+  footerText:     { ...FONTS.regular, color: COLORS.textSecondary, fontSize: SIZES.body1 },
+  footerActionText:{ ...FONTS.bold, color: COLORS.primary, fontSize: SIZES.body1 },
 });
 
 export default RegisterScreen;

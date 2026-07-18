@@ -1,174 +1,260 @@
+'use strict';
+
 // src/controllers/webhookController.js
+
 const crypto = require('crypto');
-const paymentService = require('../services/paymentService');
-const mongoose = require('mongoose');
 const { getAllSecretKeys, getTenantConfigBySecretKey } = require('../services/tenantConfigService');
-const { getTenantConnection } = require('../services/tenantDbService'); // Assume this exists
-
-// **IMPORTANT: Get the Paystack Secret Key and the Tenant Model Map**
-// Since webhooks don't go through the tenant middleware, 
-// you need a way to look up the correct tenant database connection and models.
-
-// For demonstration, let's assume a simplified way to map keys to tenants.
-// In a real app, you'd fetch this from a central configuration DB (Master DB).
-// const PAYSTACK_SECRET_MAP = {
-//   'test_secret_key_clientA': { tenantId: 'clientA', connection: 'clientA_db_connection_instance' },
-//   // ... other tenants
-// };
-// // You'll also need a function to get the correct Mongoose models for the tenant.
-// const { getTenantModels } = require('../services/tenantDbService'); // Assume this exists
-
-// const getTenantBySecret = (secret) => {
-//     // In a real system, you query your master database to find the tenant 
-//     // whose Paystack secret key matches the one used in the request.
-//     const tenantInfo = Object.values(PAYSTACK_SECRET_MAP).find(info => info.secretKey === secret);
-//     return tenantInfo;
-// };
-
+const { getTenantConnection } = require('../services/tenantDbService');
+const { creditWallet } = require('./walletController');
+const paymentService = require('../services/paymentService');
 
 /**
- * @desc    Handles Paystack event webhooks (Success, Failure, etc.)
+ * @desc    Handle Paystack webhook events
  * @route   POST /api/v1/webhooks/paystack
- * @access  Public (Must be verified using signature)
+ * @access  Public — verified via HMAC-SHA512 signature
  */
 exports.handlePaystackWebhook = async (req, res) => {
-    console.log('webhook started')
-    // 1. Get the Paystack Signature from the request header
-    const hash = req.headers['x-paystack-signature'];
+  console.log('[Webhook] Paystack webhook received.');
 
+  const signature = req.headers['x-paystack-signature'];
 
-    // --- TEMPORARY DEBUG BLOCK ---
-    const rawBodyString = req.body.toString('utf8'); // Convert buffer to string
+  if (!Buffer.isBuffer(req.body) || !signature) {
+    return res.status(400).send('Webhook: Missing body or signature.');
+  }
 
+  let event;
+  try {
+    event = JSON.parse(req.body.toString('utf8'));
+  } catch (e) {
+    console.error('[Webhook] Failed to parse body:', e.message);
+    return res.status(400).send('Webhook: Invalid JSON body.');
+  }
 
-    // We expect the raw body buffer here (thanks to bodyParser.raw in server.js)
-    if (!req.body || !hash) {
-        return res.status(400).send('Webhook: Invalid request or missing signature.');
+  // Identify tenant by verifying HMAC against every known Paystack secret key
+  let tenantConfig = null;
+  for (const key of getAllSecretKeys()) {
+    const hmac = crypto
+      .createHmac('sha512', key)
+      .update(req.body)
+      .digest('hex');
+
+    if (hmac === signature) {
+      tenantConfig = getTenantConfigBySecretKey(key);
+      break;
     }
-    
-    // Convert the raw body buffer back to a JSON object for processing
-    let event;
-    try {
-        // Attempt to parse the raw body buffer received from Paystack
-        event = JSON.parse(rawBodyString);
-    } catch (e) {
-        console.error("Failed to parse Paystack webhook body:", e);
-        return res.status(400).send('Webhook: Invalid JSON body.');
-    }
+  }
 
-    // Determine the tenant connection by finding which secret key matches the hash
-    let tenantConfig = null;
-    let secretKey = null;
+  if (!tenantConfig) {
+    console.warn('[Webhook] Unauthorized: signature matched no known tenant key.');
+    return res.status(401).send('Webhook: Unauthorized.');
+  }
 
-    // **CRITICAL STEP: AUTHENTICATE THE WEBHOOK & FIND THE TENANT**
-    const allSecretKeys = getAllSecretKeys();
-    
-    // Iterate through known tenant secrets to find a match
-    for (const key of allSecretKeys) {
-        const hmac = crypto.createHmac('sha512', key)
-                           .update(req.body)
-                           .digest('hex');
-                           
-        if (hmac === hash) {
-            tenantConfig = getTenantConfigBySecretKey(key);
-            secretKey = key;
-            break;
-        }
-        console.log(`   HMAC calculated for key ${key.substring(0, 5)}: ${hmac}`); // Optional log
-    
-    }
-console.log('tenantConfig and secret assigned', tenantConfig, secretKey)
+  console.log(`[Webhook] Authenticated for tenant: ${tenantConfig.tenantId}`);
 
+  // Acknowledge immediately — Paystack retries if no 200 within 5s
+  res.status(200).send('Webhook received.');
 
-
-
-
-    if (!tenantConfig) {
-        console.warn("Unauthorized Webhook Attempt: Signature did not match any known tenant.");
-        return res.status(401).send('Webhook: Unauthorized signature.');
-    }
-
-    // 3. Get the correct connection and models for this tenant
-    const tenantConnection = await getTenantConnection(tenantConfig.tenantId);
-    if (!tenantConnection) {
-        return res.status(500).send('Webhook: Tenant connection not established.');
-    }
-    console.log('tenant connection established',tenantConnection.models)
-    const Transaction = tenantConnection.models.Transaction
-    const Wallet = tenantConnection.models.Wallet
-    // const { Transaction, Wallet } = tenantConnection.models; // Use models attached to the connection
-    if (!Transaction || !Wallet) {
-        return res.status(500).send('Webhook: Tenant models not found on connection.');
-    }
-    console.log('Transaction & Wallet models required')
-    // Paystack requires 200 OK immediately to stop retries
-   
-    
-   // src/controllers/webhookController.js (inside handlePaystackWebhook)
-
-// ... (Authentication and Model retrieval code here) ...
-
-// Paystack requires 200 OK immediately to stop retries
-// res.status(200).send('Webhook Received'); // <-- HTTP response sent and connection closed.
-
-// -----------------------------------------------------------
-// 2. Wrap and Call the Asynchronous Logic to run in the background
-// -----------------------------------------------------------
-
-// Check the event type before wrapping (for efficiency)
-if (event.event === 'charge.success') {
-    // Launch an async IIFE immediately without 'await'
-    (async () => {
-        const data = event.data;
-        const reference = data.reference;
-        const amountPaidKobo = data.amount; 
-        
-        // Ensure you are logging errors in this detached process!
-        let session = null;
-        try {
-            session = await tenantConnection.startSession();
-            session.startTransaction();
-
-            // 1. Find the transaction in the tenant DB
-            const transaction = await Transaction.findOne({ transactionReference: reference }).session(session);
-
-            if (!transaction) {
-                console.warn(`Webhook: Transaction reference ${reference} not found in DB.`);
-                await session.abortTransaction();
-                return; 
-            }
-            
-            // ... (rest of your transaction logic: Idempotency Check, Amount Check, Wallet Update) ...
-
-            // 4. Update Wallet Balance (Atomic)
-            const updatedWallet = await Wallet.findOneAndUpdate(
-                 { user: transaction.user }, 
-                 { $inc: { balance: amountPaidKobo } },
-                 { new: true, session }
-            );
-
-            // 5. Update Transaction Status
-            transaction.status = 'SUCCESS';
-            transaction.paymentGatewayRef = data.id; 
-            transaction.newBalance = updatedWallet.balance;
-            await transaction.save({ session });
-
-            await session.commitTransaction();
-            console.log(`Webhook SUCCESS: Wallet funded for user ${transaction.user}`);
-             res.status(200).send('Webhook Received'); 
-            
-        } catch (err) {
-            // Log any errors that happen in the background
-            console.error(`Webhook Processing Error for ref ${reference}:`, err);
-            // No need to res.status() here, as the response was already sent.
-        } finally {
-            if (session) session.endSession();
-        }
-    })(); // The function is called immediately
-} 
-
-// The main handlePaystackWebhook function now ends here and returns immediately.
-// Any code below this line is unreachable.
-    
-    // Add logic for other events like 'transfer.success', 'subscription.create', etc.
+  // Process asynchronously so HTTP response is never blocked
+  setImmediate(() => processWebhookEvent(event, tenantConfig));
 };
+
+// ---------------------------------------------------------------------------
+// Event processor
+// ---------------------------------------------------------------------------
+
+async function processWebhookEvent(event, tenantConfig) {
+  const { tenantId } = tenantConfig;
+
+  try {
+    const connection  = getTenantConnection(tenantId);
+    const Transaction = connection.models.Transaction;
+    const Wallet      = connection.models.Wallet;
+    const User        = connection.models.User;
+
+    if (!Transaction || !Wallet || !User) {
+      console.error(`[Webhook] Models not found for tenant "${tenantId}".`);
+      return;
+    }
+
+    switch (event.event) {
+      case 'charge.success':
+        await handleChargeSuccess(event.data, { Transaction, Wallet, User, tenantId });
+        break;
+      default:
+        console.log(`[Webhook] Unhandled event: "${event.event}" — ignoring.`);
+    }
+
+  } catch (err) {
+    console.error(`[Webhook] processWebhookEvent error for tenant "${tenantId}":`, err.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// charge.success
+//
+// Two distinct flows land here, distinguished by event.data.channel:
+//
+//   1. Checkout flow (channel: 'card', 'bank', 'ussd', 'bank_transfer' via
+//      /transaction/initialize) — a Transaction document already exists,
+//      created by initiateFunding(). We match it by `reference`.
+//
+//   2. Dedicated Virtual Account flow (channel: 'dedicated_nuban') —
+//      the user transferred money directly to their assigned account.
+//      NO Transaction document exists yet — Paystack generates its own
+//      reference. We must identify the user via event.data.customer.customer_code
+//      (or event.data.authorization.receiver_bank_account_number) and
+//      create a new FUNDING transaction + credit the wallet.
+// ---------------------------------------------------------------------------
+
+async function handleChargeSuccess(data, ctx) {
+  const { Transaction, Wallet, User, tenantId } = ctx;
+  const channel = data.channel;
+
+  console.log(`[Webhook] charge.success — channel: "${channel}", ref: ${data.reference}, amount: ₦${data.amount / 100}`);
+
+  if (channel === 'dedicated_nuban') {
+    return handleDedicatedAccountCredit(data, ctx);
+  }
+
+  return handleCheckoutCredit(data, ctx);
+}
+
+// ---------------------------------------------------------------------------
+// Checkout flow — existing PENDING transaction, match by reference
+// ---------------------------------------------------------------------------
+
+async function handleCheckoutCredit(data, { Transaction, Wallet, tenantId }) {
+  const reference  = data.reference;
+  const amountKobo = data.amount;
+  const gatewayRef = data.id;
+
+  try {
+    const transaction = await Transaction.findOne({ transactionReference: reference });
+
+    if (!transaction) {
+      console.warn(`[Webhook] Checkout transaction ref "${reference}" not found — may be a DVA event with no pre-created record. Ignoring.`);
+      return;
+    }
+
+    const { alreadyProcessed, balance } = await creditWallet({
+      transaction,
+      amountKobo,
+      gatewayRef,
+      Transaction,
+      Wallet,
+    });
+
+    if (alreadyProcessed) {
+      console.log(`[Webhook] Transaction "${reference}" already processed — skipping.`);
+      return;
+    }
+
+    console.log(
+      `[Webhook] ✅ Wallet funded (checkout) — tenant: "${tenantId}" | ` +
+      `user: ${transaction.user} | amount: ₦${amountKobo / 100} | new balance: ₦${balance / 100}`
+    );
+
+  } catch (err) {
+    console.error(`[Webhook] handleCheckoutCredit error for ref "${reference}":`, err.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Dedicated Virtual Account flow — no pre-existing transaction.
+// Identify user via customer_code, create FUNDING transaction, credit wallet.
+// ---------------------------------------------------------------------------
+
+async function handleDedicatedAccountCredit(data, { Transaction, Wallet, User, tenantId }) {
+  const amountKobo  = data.amount;
+  const gatewayRef  = data.id;
+  const paystackRef = data.reference;
+  const customerCode = data.customer?.customer_code;
+  const receiverAccount = data.authorization?.receiver_bank_account_number;
+  const senderName  = data.authorization?.sender_bank
+    ? `${data.authorization.sender_bank} - ${data.authorization.sender_name || 'Unknown'}`
+    : 'Bank Transfer';
+
+  if (!customerCode && !receiverAccount) {
+    console.error('[Webhook] DVA credit missing both customer_code and receiver_account — cannot identify user.', {
+      reference: paystackRef,
+    });
+    return;
+  }
+
+  try {
+    // 1. Find the user — try customerCode first, fall back to account number
+    let user = null;
+
+    if (customerCode) {
+      user = await User.findOne({ paystackCustomerCode: customerCode });
+    }
+
+    if (!user && receiverAccount) {
+      user = await User.findOne({ 'dedicatedAccount.accountNumber': receiverAccount });
+    }
+
+    if (!user) {
+      console.error(
+        `[Webhook] DVA credit — no user found for customer_code "${customerCode}" / ` +
+        `account "${receiverAccount}". Funds received but NOT credited. ` +
+        `Manual reconciliation needed. Paystack ref: ${paystackRef}`
+      );
+      return;
+    }
+
+    // 2. Idempotency — Paystack may retry webhooks. Check if we've already
+    //    recorded this exact gateway reference.
+    const existing = await Transaction.findOne({ paymentGatewayRef: String(gatewayRef) });
+    if (existing) {
+      console.log(`[Webhook] DVA credit — gatewayRef "${gatewayRef}" already processed. Skipping.`);
+      return;
+    }
+
+    // 3. Create a new FUNDING transaction record for this transfer
+    const wallet = await Wallet.findOne({ user: user._id });
+    if (!wallet) {
+      console.error(`[Webhook] DVA credit — wallet not found for user ${user._id}.`);
+      return;
+    }
+
+    const transaction = await Transaction.create({
+      user:                 user._id,
+      type:                 'FUNDING',
+      amount:               amountKobo,
+      status:               'PENDING',
+      transactionReference: paymentService.generateReference(),
+      paymentGatewayRef:    String(gatewayRef),
+      previousBalance:      wallet.balance,
+      newBalance:           wallet.balance, // updated by creditWallet below
+      details: {
+        method:        'dedicated_account_transfer',
+        senderName,
+        paystackReference: paystackRef,
+        accountNumber: receiverAccount,
+      },
+    });
+
+    // 4. Credit wallet using the shared helper
+    const { alreadyProcessed, balance } = await creditWallet({
+      transaction,
+      amountKobo,
+      gatewayRef,
+      Transaction,
+      Wallet,
+    });
+
+    if (alreadyProcessed) {
+      console.log(`[Webhook] DVA transaction "${transaction.transactionReference}" already processed — skipping.`);
+      return;
+    }
+
+    console.log(
+      `[Webhook] ✅ Wallet funded (DVA transfer) — tenant: "${tenantId}" | ` +
+      `user: ${user._id} | amount: ₦${amountKobo / 100} | new balance: ₦${balance / 100} | ` +
+      `from: ${senderName}`
+    );
+
+  } catch (err) {
+    console.error(`[Webhook] handleDedicatedAccountCredit error for ref "${paystackRef}":`, err.message);
+  }
+}

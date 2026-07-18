@@ -1,17 +1,18 @@
 const express = require('express');
 const authController = require('../controllers/authController');
-// Import middleware just for the 'me' route
+// Import middleware
 const { protect } = require('../middleware/authMiddleware');
-const tenantMiddleware = require('../middleware/tenantMiddleware')
+const authTenantMiddleware = require('../middleware/authTenantMiddleware');
 
 const router = express.Router();
 
 // --- Public Routes ---
-router.post('/register', authController.register);
-router.post('/login', tenantMiddleware, authController.login);
+// These routes accept tenantId from header, query, or body
+router.post('/register', authTenantMiddleware, authController.register);
+router.post('/login', authTenantMiddleware, authController.login);
 
 // --- Protected Routes ---
-// Although it's an auth check, getting current user info requires being logged in.
+// These routes require authentication
 router.get('/me', protect, authController.getMe);
 
 module.exports = router;
