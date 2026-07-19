@@ -3,7 +3,7 @@
 // src/services/tenantDbService.js
 
 const mongoose = require('mongoose');
-const { getAllTenantSecrets, getTenantSecret } = require('./tenantConfigService');
+const { getAllTenantSecrets, getTenantSecret, loadTenantSecrets, isTenantCacheEmpty } = require('./tenantConfigService');
 
 // Model definitions
 const { schema: UserSchema,        modelName: UserModelName        } = require('../models/User');
@@ -117,8 +117,28 @@ async function getTenantConnection(tenantId) {
   let connection = tenantConnections[tenantId];
 
   // Lazy fallback: create connection on-demand if missing
+  console.log(`[tenantDbService] Lookup for tenant "${tenantId}" — connection ${connection ? 'found' : 'not found'}.`);
   if (!connection) {
     console.warn(`[tenantDbService] Cache miss for "${tenantId}" — attempting lazy connect.`);
+
+    // If the tenant secrets cache is empty (e.g. boot failed on serverless cold start),
+    // try to reload tenant secrets from the Master DB first.
+    if (isTenantCacheEmpty()) {
+      console.warn('[tenantDbService] Tenant cache is empty — attempting lazy reload of tenant secrets…');
+      try {
+        await loadTenantSecrets();
+        console.log('[tenantDbService] Lazy reload of tenant secrets succeeded.');
+      } catch (reloadErr) {
+        console.error('[tenantDbService] Lazy reload of tenant secrets failed:', reloadErr.message);
+        const err = new Error(
+          `[tenantDbService] No connection found for tenant "${tenantId}". ` +
+          'Could not connect to Master DB to load tenant configs. ' +
+          'Check: DATABASE_URI in Vercel env, and MongoDB Atlas Network Access (add 0.0.0.0/0).'
+        );
+        err.statusCode = 503;
+        throw err;
+      }
+    }
 
     const secret = getTenantSecret(tenantId);
 

@@ -213,6 +213,11 @@ app.use((err, _req, res, _next) => {
 //   1. loadTenantSecrets()   — master tenant credentials
 //   2. connectAllTenantDbs() — per-tenant DB connections
 //   3. app.listen()          — only after DBs are ready
+//
+// IMPORTANT: On Vercel (serverless), we do NOT process.exit(1) on failure.
+// The lazy-connection fallback in getTenantConnection() will retry the
+// Master DB connection on the first incoming request. This is critical
+// because Vercel cold-starts may have transient network issues.
 // ---------------------------------------------------------------------------
 (async () => {
   try {
@@ -222,15 +227,18 @@ app.use((err, _req, res, _next) => {
     console.log('[BOOT] Connecting tenant databases…');
     await connectAllTenantDbs();
 
-    app.listen(PORT, () => {
-      console.log(
-        `[BOOT] OGNetwork backend running on port ${PORT} [${NODE_ENV}]`
-      );
-    });
+    console.log('[BOOT] All tenant DB connections established.');
   } catch (err) {
-    console.error('[BOOT] Fatal startup error — shutting down:', err);
-    process.exit(1);
+    console.error('[BOOT] Startup warning (non-fatal):', err.message);
+    console.error('[BOOT] The server will still start. Lazy fallback will retry connections on first request.');
   }
+
+  // Always start the server, even if DB connections failed
+  app.listen(PORT, () => {
+    console.log(
+      `[BOOT] OGNetwork backend running on port ${PORT} [${NODE_ENV}]`
+    );
+  });
 })();
 
 module.exports = app; // exported for potential testing use
