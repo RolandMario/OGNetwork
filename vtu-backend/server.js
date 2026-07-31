@@ -25,8 +25,7 @@ const authRoutes      = require('./src/routes/authRoutes');
 const userRoutes      = require('./src/routes/userRoutes');
 const vtuRoutes = require('./src/routes/vtuRoutes');
 const adminRoutes = require('./src/routes/adminRoutes');
-
-// const walletRoutes = require('./src/routes/walletRoutes');
+const walletRoutes = require('./src/routes/walletRoutes');
 const app = express();
 const PORT = process.env.PORT || 5001;
 const NODE_ENV = process.env.NODE_ENV || 'development';
@@ -172,7 +171,8 @@ app.use('/api/v1/admin', adminRoutes);  // <- ADD THIS
 // app.use('/api/v1/admin', tenantMiddleware, adminRoutes);
 
 
-// app.use('/api/v1/wallet', walletRoutes);
+// Wallet routes — mounted under /user/wallet to match frontend API routes
+app.use('/api/v1/user/wallet', walletRoutes);
 
 // ---------------------------------------------------------------------------
 // 8. Health-check endpoint (useful for load balancers / uptime monitors)

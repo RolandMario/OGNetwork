@@ -16,6 +16,7 @@ export default function LoginPage() {
     e.preventDefault();
     setLoading(true);
     setError(null);
+    console.log("Attempting login with:", { email, password });
 
     try {
       const res = await fetch(`${API_BASE}/auth/login`, {

@@ -30,10 +30,10 @@ export const UserProvider = ({ children }) => {
     setUserProfile(user);
     setWallet(wallet);
     // await AsyncStorage.setItem('user', user)
-    await AsyncStorage.setItem('userToken', token);
+    await AsyncStorage.setItem('token', token);
     await AsyncStorage.setItem('tenantId', id);
     setIsLoading(false);
-  }, [userToken]);
+  }, []);
 
   /**
    * @desc Fetches the dashboard data (user and wallet) from the backend.
@@ -83,7 +83,7 @@ export const UserProvider = ({ children }) => {
     setTenantId(null);
     setUserProfile(null);
     setWallet(null);
-    await AsyncStorage.removeItem('userToken');
+    await AsyncStorage.removeItem('token');
     await AsyncStorage.removeItem('tenantId');
   }, []);
   

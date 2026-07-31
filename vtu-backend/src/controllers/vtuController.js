@@ -3,6 +3,8 @@
 // src/controllers/vtuController.js
 
 const vtuService = require('../services/vtuService');
+const providerRegistry = require('../services/providerRegistry');
+const adminService = require('../services/adminService');
 
 // ---------------------------------------------------------------------------
 // Helper — debit wallet and create a PENDING transaction
@@ -155,7 +157,8 @@ exports.getPlans = async (req, res) => {
 
 exports.getAirtimeNetworks = async (req, res) => {
   try {
-    const data = await vtuService.getAirtimeNetworks();
+    const provider = await providerRegistry.getProvider('airtime', req.models.AdminConfig);
+    const data = await provider.getAirtimeNetworks();
     res.status(200).json({ status: 'success', data });
   } catch (error) {
     res.status(500).json({ status: 'error', message: error.message });
@@ -164,7 +167,8 @@ exports.getAirtimeNetworks = async (req, res) => {
 
 exports.getDataNetworks = async (req, res) => {
   try {
-    const data = await vtuService.getDataNetworks();
+    const provider = await providerRegistry.getProvider('data', req.models.AdminConfig);
+    const data = await provider.getDataNetworks();
     res.status(200).json({ status: 'success', data });
   } catch (error) {
     res.status(500).json({ status: 'error', message: error.message });
@@ -174,7 +178,8 @@ exports.getDataNetworks = async (req, res) => {
 exports.getDataPlans = async (req, res) => {
   try {
     const { network } = req.params;
-    const data = await vtuService.getDataPlans(network);
+    const provider = await providerRegistry.getProvider('data', req.models.AdminConfig);
+    const data = await provider.getDataPlans(network);
     res.status(200).json({ status: 'success', data });
   } catch (error) {
     res.status(500).json({ status: 'error', message: error.message });
@@ -183,7 +188,8 @@ exports.getDataPlans = async (req, res) => {
 
 exports.getCableProviders = async (req, res) => {
   try {
-    const data = await vtuService.getCableProviders();
+    const provider = await providerRegistry.getProvider('cable', req.models.AdminConfig);
+    const data = await provider.getCableProviders();
     res.status(200).json({ status: 'success', data });
   } catch (error) {
     res.status(500).json({ status: 'error', message: error.message });
@@ -193,7 +199,8 @@ exports.getCableProviders = async (req, res) => {
 exports.getCablePlans = async (req, res) => {
   try {
     const { identifier } = req.params;
-    const data = await vtuService.getCablePlans(identifier);
+    const provider = await providerRegistry.getProvider('cable', req.models.AdminConfig);
+    const data = await provider.getCablePlans(identifier);
     res.status(200).json({ status: 'success', data });
   } catch (error) {
     res.status(500).json({ status: 'error', message: error.message });
@@ -206,7 +213,8 @@ exports.verifyCableIUC = async (req, res) => {
     if (!iuc || !identifier) {
       return res.status(400).json({ status: 'fail', message: 'iuc and identifier are required.' });
     }
-    const data = await vtuService.verifyCableIUC({ iuc, identifier });
+    const provider = await providerRegistry.getProvider('cable', req.models.AdminConfig);
+    const data = await provider.verifyCableIUC({ iuc, identifier });
     res.status(200).json({ status: 'success', data });
   } catch (error) {
     res.status(500).json({ status: 'error', message: error.message });
@@ -238,8 +246,9 @@ exports.getElectricityPlans = async (req, res) => {
       }
     }
 
-    // Fallback to Peyflex directly if DB empty
-    const data = await vtuService.getElectricityPlans();
+    // Fallback to configured provider if DB empty
+    const provider = await providerRegistry.getProvider('electricity', req.models.AdminConfig);
+    const data = await provider.getElectricityPlans();
     res.status(200).json({ status: 'success', data });
   } catch (error) {
     res.status(500).json({ status: 'error', message: error.message });
@@ -260,7 +269,8 @@ exports.verifyMeter = async (req, res) => {
       return res.status(400).json({ status: 'fail', message: 'meter and plan are required.' });
     }
 
-    const data = await vtuService.verifyMeter({ meter, plan, type });
+    const provider = await providerRegistry.getProvider('electricity', req.models.AdminConfig);
+    const data = await provider.verifyMeter({ meter, plan, type });
     res.status(200).json({ status: 'success', data });
   } catch (error) {
     res.status(error.statusCode || 500).json({ status: 'error', message: error.message });
@@ -303,15 +313,17 @@ exports.buyAirtime = async (req, res) => {
       Transaction,
     });
 
-    const providerResponse = await vtuService.purchaseAirtime({ network, amount: Number(amount), mobile_number });
+    const airtimeProvider = await providerRegistry.getProvider('airtime', req.models.AdminConfig);
+    const providerResponse = await airtimeProvider.purchaseAirtime({ network, amount: Number(amount), mobile_number });
 
-    // Calculate airtime profit based on configured percentage
+    // Calculate airtime profit based on user level percentage
     let airtimeProfitKobo = 0;
     try {
       const AdminConfig = req.models.AdminConfig;
       if (AdminConfig) {
-        const config = await AdminConfig.findOne({ key: 'airtimeProfitPercent' });
-        const profitPercent = config ? Number(config.value) : 0;
+        const profitLevels = await adminService.getAirtimeProfitLevels(AdminConfig);
+        const userLevel = req.user.level || 'normal';
+        const profitPercent = profitLevels[userLevel] || 0;
         airtimeProfitKobo = Math.round(Number(amount) * 100 * (profitPercent / 100));
       }
     } catch (err) {
@@ -322,7 +334,7 @@ exports.buyAirtime = async (req, res) => {
       { _id: txData.transaction._id },
       {
         status: 'SUCCESS',
-        providerRef: String(providerResponse.transaction_id),
+        providerRef: String(providerResponse.providerTxId || providerResponse.transaction_id || ''),
         newBalance: txData.newBalance,
         profit: airtimeProfitKobo,
       }
@@ -337,7 +349,7 @@ exports.buyAirtime = async (req, res) => {
         mobile_number,
         amount,
         newBalance:    txData.newBalance / 100,
-        providerRef:   providerResponse.transaction_id,
+        providerRef:   providerResponse.providerTxId || providerResponse.transaction_id,
       },
     });
 
@@ -384,28 +396,34 @@ exports.buyData = async (req, res) => {
       planCode: plan_code,
     });
 
-    // 2. Debit user at ourPrice
+    // 2. Determine user's price based on their level
+    const userLevel = req.user.level || 'normal';
+    const userPrice = (plan.prices && plan.prices[userLevel] !== undefined)
+      ? plan.prices[userLevel]
+      : plan.ourPrice;
+
     txData = await debitWalletAndCreateTx({
       userId,
-      amountNaira: plan.ourPrice,
+      amountNaira: userPrice,
       type:        'DATA',
-      details:     { beneficiary: mobile_number, network, planId: plan_code, planName: plan.planName },
+      details:     { beneficiary: mobile_number, network, planId: plan_code, planName: plan.planName, userLevel },
       Wallet,
       Transaction,
     });
 
     // 3. Call Peyflex — they charge at providerPrice via plan_code
-    const providerResponse = await vtuService.purchaseData({ network, plan_code, mobile_number });
+    const dataProvider = await providerRegistry.getProvider('data', req.models.AdminConfig);
+    const providerResponse = await dataProvider.purchaseData({ network, plan_code, mobile_number });
 
-    // 4. Calculate profit = (ourPrice - providerPrice) * 100 (in kobo)
-    const dataProfitKobo = Math.round((plan.ourPrice - plan.providerPrice) * 100);
+    // 4. Calculate profit = (userPrice - providerPrice) * 100 (in kobo)
+    const dataProfitKobo = Math.round((userPrice - plan.providerPrice) * 100);
 
     // 5. Mark SUCCESS with profit
     await Transaction.findOneAndUpdate(
       { _id: txData.transaction._id },
       {
         status: 'SUCCESS',
-        providerRef: String(providerResponse.transaction_id || ''),
+        providerRef: String(providerResponse.providerTxId || providerResponse.transaction_id || ''),
         newBalance: txData.newBalance,
         profit: dataProfitKobo,
       }
@@ -420,7 +438,7 @@ exports.buyData = async (req, res) => {
         plan_code,
         planName:      plan.planName,
         mobile_number,
-        amount:        plan.ourPrice,
+        amount:        userPrice,
         newBalance:    txData.newBalance / 100,
       },
     });
@@ -466,27 +484,33 @@ exports.subscribeCable = async (req, res) => {
       planCode: plan,
     });
 
-    // 2. Debit user at ourPrice
+    // 2. Determine user's price based on their level
+    const userLevel = req.user.level || 'normal';
+    const userPrice = (dbPlan.prices && dbPlan.prices[userLevel] !== undefined)
+      ? dbPlan.prices[userLevel]
+      : dbPlan.ourPrice;
+
     txData = await debitWalletAndCreateTx({
       userId,
-      amountNaira: dbPlan.ourPrice,
+      amountNaira: userPrice,
       type:        'CABLE',
-      details:     { beneficiary: iuc, network: identifier, planId: plan, planName: dbPlan.planName },
+      details:     { beneficiary: iuc, network: identifier, planId: plan, planName: dbPlan.planName, userLevel },
       Wallet,
       Transaction,
     });
 
     // 3. Call Peyflex at providerPrice (amount determined by plan on their end)
-    const providerResponse = await vtuService.subscribeCable({
+    const cableProvider = await providerRegistry.getProvider('cable', req.models.AdminConfig);
+    const providerResponse = await cableProvider.subscribeCable({
       identifier,
       plan,
       iuc,
       phone,
-      amount: dbPlan.providerPrice, // send providerPrice to Peyflex
+      amount: dbPlan.providerPrice, // send providerPrice to provider
     });
 
-    // 4. Calculate profit = (ourPrice - providerPrice) * 100 (in kobo)
-    const cableProfitKobo = Math.round((dbPlan.ourPrice - dbPlan.providerPrice) * 100);
+    // 4. Calculate profit = (userPrice - providerPrice) * 100 (in kobo)
+    const cableProfitKobo = Math.round((userPrice - dbPlan.providerPrice) * 100);
 
     await Transaction.findOneAndUpdate(
       { _id: txData.transaction._id },
@@ -502,7 +526,7 @@ exports.subscribeCable = async (req, res) => {
         plan,
         planName:   dbPlan.planName,
         iuc,
-        amount:     dbPlan.ourPrice,
+        amount:     userPrice,
         newBalance: txData.newBalance / 100,
       },
     });
@@ -590,10 +614,11 @@ exports.buyElectricity = async (req, res) => {
     });
 
     // 4. Call Peyflex at original amount (not marked up)
-    const providerResponse = await vtuService.purchaseElectricity({
+    const electricityProvider = await providerRegistry.getProvider('electricity', req.models.AdminConfig);
+    const providerResponse = await electricityProvider.purchaseElectricity({
       meter,
       plan,
-      amount: Number(amount), // Peyflex gets original amount
+      amount: Number(amount), // Provider gets original amount
       phone,
       type,
     });
@@ -606,7 +631,7 @@ exports.buyElectricity = async (req, res) => {
       { _id: txData.transaction._id },
       {
         status:      'SUCCESS',
-        providerRef: providerResponse.reference || '',
+        providerRef: providerResponse.providerTxId || providerResponse.reference || '',
         newBalance:  txData.newBalance,
         profit:      electricityProfitKobo,
         details: {
@@ -614,7 +639,7 @@ exports.buyElectricity = async (req, res) => {
           network:     plan,
           planName:    dbPlan.planName,
           meterType:   type,
-          token:       providerResponse.token,
+          token:       providerResponse.token || providerResponse.providerTxId,
         },
       }
     );
@@ -628,9 +653,9 @@ exports.buyElectricity = async (req, res) => {
         planName:   dbPlan.planName,
         meter,
         amount:     chargeAmount,
-        token:      providerResponse.token,
+        token:      providerResponse.token || providerResponse.providerTxId,
         newBalance: txData.newBalance / 100,
-        providerRef: providerResponse.reference,
+        providerRef: providerResponse.providerTxId || providerResponse.reference,
       },
     });
 

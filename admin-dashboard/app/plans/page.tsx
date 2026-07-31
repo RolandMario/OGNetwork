@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001/api/v1";
 
+const USER_LEVELS = ['normal', 'affiliate', 'top_user', 'api_user'];
+
 interface ServicePlan {
   _id: string;
   service: string;
@@ -14,9 +16,22 @@ interface ServicePlan {
   description?: string;
   providerPrice: number;
   ourPrice: number;
+  prices?: {
+    normal: number;
+    affiliate: number;
+    top_user: number;
+    api_user: number;
+  };
   isActive: boolean;
   metadata?: any;
   createdAt: string;
+}
+
+interface LevelPrices {
+  normal: number;
+  affiliate: number;
+  top_user: number;
+  api_user: number;
 }
 
 export default function PlansPage() {
@@ -28,6 +43,7 @@ export default function PlansPage() {
   const [serviceFilter, setServiceFilter] = useState("ALL");
   const [editingPlan, setEditingPlan] = useState<ServicePlan | null>(null);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [saveMsg, setSaveMsg] = useState<string | null>(null);
 
   useEffect(() => {
     if (!localStorage.getItem("adminToken")) {
@@ -87,6 +103,41 @@ export default function PlansPage() {
       setPlans(plans.map(p => p._id === planId ? { ...p, ...updates } : p));
       setShowEditModal(false);
       setEditingPlan(null);
+      setSaveMsg("Plan updated successfully.");
+      setTimeout(() => setSaveMsg(null), 3000);
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
+  const updateLevelPrices = async (planId: string, prices: LevelPrices) => {
+    try {
+      const token = localStorage.getItem("adminToken");
+      const tenantId = localStorage.getItem("tenantId") || "demo";
+
+      const res = await fetch(`${API_BASE}/admin/plans/${planId}/prices`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "x-tenant-id": tenantId,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ prices }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.message || "Failed to update level prices");
+      }
+
+      // Update local state with new prices
+      setPlans(plans.map(p =>
+        p._id === planId ? { ...p, prices: { ...p.prices, ...prices } as LevelPrices } : p
+      ));
+      setShowEditModal(false);
+      setEditingPlan(null);
+      setSaveMsg("Level prices updated successfully.");
+      setTimeout(() => setSaveMsg(null), 3000);
     } catch (err: any) {
       alert(err.message);
     }
@@ -134,11 +185,22 @@ export default function PlansPage() {
     }
   };
 
+  const getLevelPrice = (plan: ServicePlan, level: string): number => {
+    if (plan.prices && (plan.prices as any)[level] !== undefined) {
+      return (plan.prices as any)[level];
+    }
+    return plan.ourPrice;
+  };
+
   const filteredPlans = serviceFilter === "ALL"
     ? plans
     : plans.filter(p => p.service === serviceFilter);
 
   const services = ["ALL", ...new Set(plans.map(p => p.service))];
+
+  const formatLevelName = (level: string) => {
+    return level.replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase());
+  };
 
   return (
     <div className="space-y-6">
@@ -163,6 +225,12 @@ export default function PlansPage() {
           </button>
         </div>
       </div>
+
+      {saveMsg && (
+        <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-green-700 text-sm">
+          {saveMsg}
+        </div>
+      )}
 
       {/* Service Filter */}
       <div className="flex gap-2 flex-wrap">
@@ -212,15 +280,27 @@ export default function PlansPage() {
                     <p className="font-medium text-slate-700">₦{plan.providerPrice.toLocaleString()}</p>
                   </div>
                   <div>
-                    <p className="text-xs text-slate-500">Your Price</p>
-                    <p className="font-medium text-blue-600">₦{plan.ourPrice.toLocaleString()}</p>
+                    <p className="text-xs text-slate-500">Normal Price</p>
+                    <p className="font-medium text-blue-600">₦{getLevelPrice(plan, 'normal').toLocaleString()}</p>
                   </div>
                   <div>
                     <p className="text-xs text-slate-500">Margin</p>
                     <p className="font-medium text-green-600">
-                      ₦{(plan.ourPrice - plan.providerPrice).toLocaleString()}
+                      ₦{(getLevelPrice(plan, 'normal') - plan.providerPrice).toLocaleString()}
                     </p>
                   </div>
+                </div>
+
+                {/* Level prices summary */}
+                <div className="grid grid-cols-2 gap-2 mb-3">
+                  {USER_LEVELS.filter(l => l !== 'normal').map(level => (
+                    <div key={level} className="text-xs">
+                      <span className="text-slate-500">{formatLevelName(level)}:</span>
+                      <span className="ml-1 font-medium text-slate-700">
+                        ₦{getLevelPrice(plan, level).toLocaleString()}
+                      </span>
+                    </div>
+                  ))}
                 </div>
 
                 <div className="flex items-center justify-between">
@@ -234,7 +314,7 @@ export default function PlansPage() {
                     }}
                     className="text-sm text-blue-600 hover:text-blue-800 font-medium"
                   >
-                    Edit
+                    Edit Prices
                   </button>
                 </div>
               </div>
@@ -246,14 +326,26 @@ export default function PlansPage() {
       {/* Edit Modal */}
       {showEditModal && editingPlan && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-md">
-            <h2 className="text-lg font-bold text-slate-900 mb-4">Edit Plan</h2>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-lg">
+            <h2 className="text-lg font-bold text-slate-900 mb-4">Edit Plan Prices</h2>
             <form onSubmit={(e) => {
               e.preventDefault();
               const form = e.target as HTMLFormElement;
-              updatePlan(editingPlan._id, {
-                ourPrice: Number((form.elements.namedItem("ourPrice") as HTMLInputElement).value),
-                isActive: (form.elements.namedItem("isActive") as HTMLInputElement).checked,
+              const ourPrice = Number((form.elements.namedItem("ourPrice") as HTMLInputElement).value);
+              const isActive = (form.elements.namedItem("isActive") as HTMLInputElement).checked;
+
+              // Collect level prices
+              const prices: any = {};
+              for (const level of USER_LEVELS) {
+                const input = form.elements.namedItem(`price_${level}`) as HTMLInputElement;
+                if (input) {
+                  prices[level] = Number(input.value);
+                }
+              }
+
+              // Update both ourPrice and level prices
+              updatePlan(editingPlan._id, { ourPrice, isActive }).then(() => {
+                updateLevelPrices(editingPlan._id, prices);
               });
             }} className="space-y-4">
               <div>
@@ -261,7 +353,7 @@ export default function PlansPage() {
                 <p className="text-xs text-slate-500">{editingPlan.provider} • {editingPlan.planCode}</p>
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Provider Price</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Provider Price (read-only)</label>
                 <input
                   type="number"
                   value={editingPlan.providerPrice}
@@ -270,16 +362,41 @@ export default function PlansPage() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Your Price (₦)</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Normal Price (₦)</label>
                 <input
                   type="number"
                   name="ourPrice"
-                  defaultValue={editingPlan.ourPrice}
+                  defaultValue={getLevelPrice(editingPlan, 'normal')}
                   required
                   min="0"
+                  step="0.01"
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm"
                 />
               </div>
+
+              {/* Level-specific prices */}
+              <div className="border-t border-slate-200 pt-4">
+                <h3 className="text-sm font-semibold text-slate-700 mb-3">Prices by User Level</h3>
+                <div className="grid grid-cols-2 gap-3">
+                  {USER_LEVELS.filter(l => l !== 'normal').map(level => (
+                    <div key={level}>
+                      <label className="block text-xs font-medium text-slate-600 mb-1">
+                        {formatLevelName(level)} (₦)
+                      </label>
+                      <input
+                        type="number"
+                        name={`price_${level}`}
+                        defaultValue={getLevelPrice(editingPlan, level)}
+                        required
+                        min="0"
+                        step="0.01"
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
               <div className="flex items-center gap-2">
                 <input
                   type="checkbox"
@@ -301,7 +418,7 @@ export default function PlansPage() {
                   type="submit"
                   className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
                 >
-                  Save Changes
+                  Save All Prices
                 </button>
               </div>
             </form>

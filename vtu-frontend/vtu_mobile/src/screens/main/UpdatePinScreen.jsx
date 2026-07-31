@@ -1,8 +1,12 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, StyleSheet, SafeAreaView, TouchableOpacity, Alert, ActivityIndicator, Platform, Vibration } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import axios from 'axios';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { COLORS, SIZES, FONTS } from '../../constants/theme';
 import CustomButton from '../../components/CustomButton';
+
+const API_URL = Platform.OS === 'android' ? 'https://vtu-project.vercel.app' : 'https://vtu-project.vercel.app';
 
 const UpdatePinScreen = ({ navigation }) => {
   const [step, setStep] = useState(1); // 1: Old PIN, 2: New PIN, 3: Confirm
@@ -23,21 +27,21 @@ const handleComplete = async () => {
       return;
     }
 
-    setIsLoading(true);
+    setLoading(true);
     try {
-      const token = await AsyncStorage.getItem('userToken');
+      const token = await AsyncStorage.getItem('token');
       
       // 2. Call the backend
       const response = await axios.patch(
-        'https://vtu-project.vercel.app/api/v1/user/update-transaction-pin',
+        `${API_URL}/api/v1/user/update-transaction-pin`,
         { 
-          oldPin: currentPin, 
+          oldPin: oldPin, 
           newPin: newPin 
         },
         {
           headers: { 
             'Authorization': `Bearer ${token}`,
-            'x-tenant-id': 'clientA' // Adjust based on your tenant logic
+            'x-tenant-id': 'demo' // Adjust based on your tenant logic
           }
         }
       );
@@ -66,7 +70,7 @@ const handleComplete = async () => {
         setConfirmPin('');
       }
     } finally {
-      setIsLoading(false);
+      setLoading(false);
     }
   };
 

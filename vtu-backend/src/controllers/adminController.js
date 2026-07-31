@@ -3,6 +3,7 @@
 // src/controllers/adminController.js
 
 const adminService = require('../services/adminService');
+const providerRegistry = require('../services/providerRegistry');
 
 // ---------------------------------------------------------------------------
 // Dashboard
@@ -12,6 +13,7 @@ const adminService = require('../services/adminService');
  * @desc    Get dashboard overview stats
  * @route   GET /api/v1/admin/dashboard
  * @access  Private, Admin only
+ * @query   ?month=8&year=2026 (optional — filters profits by month)
  */
 exports.getDashboard = async (req, res) => {
   try {
@@ -46,9 +48,22 @@ exports.getDashboard = async (req, res) => {
     ]);
     const totalRevenue = revenueResult[0]?.total || 0;
 
+    // Build profit match filter — optionally filter by month/year
+    const profitMatch = { status: 'SUCCESS', type: { $in: ['AIRTIME', 'DATA', 'CABLE', 'ELECTRICITY'] } };
+    const { month, year } = req.query;
+    if (month && year) {
+      const m = parseInt(month);
+      const y = parseInt(year);
+      if (m >= 1 && m <= 12 && y >= 2000) {
+        const startDate = new Date(y, m - 1, 1);
+        const endDate = new Date(y, m, 0, 23, 59, 59, 999);
+        profitMatch.createdAt = { $gte: startDate, $lte: endDate };
+      }
+    }
+
     // Calculate profits grouped by service type
     const profitResult = await Transaction.aggregate([
-      { $match: { status: 'SUCCESS', type: { $in: ['AIRTIME', 'DATA', 'CABLE', 'ELECTRICITY'] } } },
+      { $match: profitMatch },
       { $group: { _id: '$type', totalProfit: { $sum: '$profit' } } },
     ]);
 
@@ -79,6 +94,9 @@ exports.getDashboard = async (req, res) => {
         totalVolume: walletData[0]?.totalBalance || 0,
         recentTransactions,
         profitsByService,
+        // Include selected month/year in response for frontend reference
+        selectedMonth: month ? parseInt(month) : null,
+        selectedYear: year ? parseInt(year) : null,
       },
     });
   } catch (error) {
@@ -159,6 +177,38 @@ exports.toggleUserStatus = async (req, res) => {
   }
 };
 
+/**
+ * @desc    Update user level (upgrade/downgrade)
+ * @route   PATCH /api/v1/admin/users/:id/level
+ * @access  Private, Admin only
+ * @body    { level: "affiliate" | "top_user" | "api_user" | "normal" }
+ */
+exports.updateUserLevel = async (req, res) => {
+  try {
+    const User = req.models.User;
+    const { id } = req.params;
+    const { level } = req.body;
+
+    if (!level) {
+      return res.status(400).json({ status: 'fail', message: 'level is required.' });
+    }
+
+    const user = await adminService.updateUserLevel(User, id, level);
+
+    res.status(200).json({
+      status: 'success',
+      data: { user },
+      message: `User level updated to ${level}.`,
+    });
+  } catch (error) {
+    console.error('[adminController.updateUserLevel] error:', error.message);
+    res.status(error.message.includes('Invalid') ? 400 : 500).json({
+      status: 'fail',
+      message: error.message,
+    });
+  }
+};
+
 // ---------------------------------------------------------------------------
 // Transactions
 // ---------------------------------------------------------------------------
@@ -229,6 +279,183 @@ exports.getWallets = async (req, res) => {
   }
 };
 
+/**
+ * @desc    Admin manually fund a user's wallet
+ * @route   POST /api/v1/admin/wallets/fund
+ * @access  Private, Admin only
+ * @body    { userId: string, amount: number (in Naira), note?: string }
+ */
+exports.fundWallet = async (req, res) => {
+  try {
+    const { userId, amount, note } = req.body;
+    const Wallet = req.models.Wallet;
+    const Transaction = req.models.Transaction;
+
+    // Validate amount
+    if (!amount || isNaN(amount) || Number(amount) <= 0) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Amount must be a positive number.',
+      });
+    }
+
+    const amountKobo = Math.round(Number(amount) * 100);
+
+    // Find wallet
+    const wallet = await Wallet.findOne({ user: userId });
+    if (!wallet) {
+      return res.status(404).json({ status: 'fail', message: 'Wallet not found for this user.' });
+    }
+
+    const previousBalance = wallet.balance;
+
+    // Credit wallet atomically
+    const updatedWallet = await Wallet.findOneAndUpdate(
+      { user: userId },
+      { $inc: { balance: amountKobo } },
+      { new: true }
+    );
+
+    // Create transaction record
+    const reference = 'ADM-' + Date.now() + '-' + Math.random().toString(36).substring(2, 8).toUpperCase();
+    await Transaction.create({
+      user: userId,
+      type: 'ADMIN_CREDIT',
+      amount: amountKobo,
+      status: 'SUCCESS',
+      transactionReference: reference,
+      note: note || 'Manual wallet funding by admin',
+      previousBalance,
+      newBalance: updatedWallet.balance,
+    });
+
+    res.status(200).json({
+      status: 'success',
+      message: `Wallet funded with ₦${Number(amount).toLocaleString()}.`,
+      data: {
+        userId,
+        amountFunded: Number(amount),
+        previousBalance: previousBalance / 100,
+        newBalance: updatedWallet.balance / 100,
+      },
+    });
+  } catch (error) {
+    console.error('[adminController.fundWallet] error:', error.message);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+/**
+ * @desc    Admin manually debit a user's wallet
+ * @route   POST /api/v1/admin/wallets/debit
+ * @access  Private, Admin only
+ * @body    { userId: string, amount: number (in Naira), note?: string }
+ */
+exports.debitWallet = async (req, res) => {
+  try {
+    const { userId, amount, note } = req.body;
+    const Wallet = req.models.Wallet;
+    const Transaction = req.models.Transaction;
+
+    // Validate amount
+    if (!amount || isNaN(amount) || Number(amount) <= 0) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Amount must be a positive number.',
+      });
+    }
+
+    const amountKobo = Math.round(Number(amount) * 100);
+
+    // Find wallet
+    const wallet = await Wallet.findOne({ user: userId });
+    if (!wallet) {
+      return res.status(404).json({ status: 'fail', message: 'Wallet not found for this user.' });
+    }
+
+    // Check sufficient balance
+    if (wallet.balance < amountKobo) {
+      return res.status(400).json({
+        status: 'fail',
+        message: `Insufficient balance. User has ₦${(wallet.balance / 100).toLocaleString()} but debit amount is ₦${Number(amount).toLocaleString()}.`,
+      });
+    }
+
+    const previousBalance = wallet.balance;
+
+    // Debit wallet atomically
+    const updatedWallet = await Wallet.findOneAndUpdate(
+      { user: userId },
+      { $inc: { balance: -amountKobo } },
+      { new: true }
+    );
+
+    // Create transaction record
+    const reference = 'ADM-' + Date.now() + '-' + Math.random().toString(36).substring(2, 8).toUpperCase();
+    await Transaction.create({
+      user: userId,
+      type: 'ADMIN_DEBIT',
+      amount: amountKobo,
+      status: 'SUCCESS',
+      transactionReference: reference,
+      note: note || 'Manual wallet debit by admin',
+      previousBalance,
+      newBalance: updatedWallet.balance,
+    });
+
+    res.status(200).json({
+      status: 'success',
+      message: `Wallet debited ₦${Number(amount).toLocaleString()}.`,
+      data: {
+        userId,
+        amountDebited: Number(amount),
+        previousBalance: previousBalance / 100,
+        newBalance: updatedWallet.balance / 100,
+      },
+    });
+  } catch (error) {
+    console.error('[adminController.debitWallet] error:', error.message);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+/**
+ * @desc    Delete a user account and associated data
+ * @route   DELETE /api/v1/admin/users/:id
+ * @access  Private, Admin only
+ */
+exports.deleteUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const User = req.models.User;
+    const Wallet = req.models.Wallet;
+    const Transaction = req.models.Transaction;
+
+    // Find user
+    const user = await User.findById(id);
+    if (!user) {
+      return res.status(404).json({ status: 'fail', message: 'User not found.' });
+    }
+
+    // Delete associated records
+    await Promise.all([
+      Wallet.deleteOne({ user: id }),
+      Transaction.deleteMany({ user: id }),
+      User.deleteOne({ _id: id }),
+    ]);
+
+    console.log(`[adminController] Deleted user ${id} (${user.email}) and all associated data.`);
+
+    res.status(200).json({
+      status: 'success',
+      message: `User ${user.fullName} (${user.email}) has been deleted along with all associated data.`,
+    });
+  } catch (error) {
+    console.error('[adminController.deleteUser] error:', error.message);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
 // ---------------------------------------------------------------------------
 // Sync all plans from Peyflex
 // ---------------------------------------------------------------------------
@@ -241,6 +468,7 @@ exports.getWallets = async (req, res) => {
 exports.syncPlans = async (req, res) => {
   try {
     const ServicePlan = req.models.ServicePlan;
+    const AdminConfig = req.models.AdminConfig;
 
     if (!ServicePlan) {
       return res.status(500).json({
@@ -249,7 +477,7 @@ exports.syncPlans = async (req, res) => {
       });
     }
 
-    const results = await adminService.syncAllPlans(ServicePlan);
+    const results = await adminService.syncAllPlans(ServicePlan, { AdminConfig });
 
     res.status(200).json({
       status: 'success',
@@ -341,6 +569,70 @@ exports.updatePlanPrice = async (req, res) => {
 };
 
 // ---------------------------------------------------------------------------
+// Level-specific plan pricing
+// ---------------------------------------------------------------------------
+
+/**
+ * @desc    Get level-specific prices for a plan
+ * @route   GET /api/v1/admin/plans/:id/prices
+ * @access  Private, Admin only
+ */
+exports.getPlanLevelPrices = async (req, res) => {
+  try {
+    const ServicePlan = req.models.ServicePlan;
+    const { id } = req.params;
+
+    const data = await adminService.getPlanLevelPrices(ServicePlan, id);
+
+    res.status(200).json({
+      status: 'success',
+      data,
+    });
+  } catch (error) {
+    console.error('[adminController.getPlanLevelPrices] error:', error.message);
+    res.status(error.message.includes('not found') ? 404 : 500).json({
+      status: 'fail',
+      message: error.message,
+    });
+  }
+};
+
+/**
+ * @desc    Update level-specific prices for a plan
+ * @route   PATCH /api/v1/admin/plans/:id/prices
+ * @access  Private, Admin only
+ * @body    { prices: { normal: 100, affiliate: 95, top_user: 90, api_user: 85 } }
+ */
+exports.updatePlanLevelPrices = async (req, res) => {
+  try {
+    const ServicePlan = req.models.ServicePlan;
+    const { id } = req.params;
+    const { prices } = req.body;
+
+    if (!prices || typeof prices !== 'object') {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'prices object is required with level keys.',
+      });
+    }
+
+    const data = await adminService.updatePlanLevelPrices(ServicePlan, id, prices);
+
+    res.status(200).json({
+      status: 'success',
+      data,
+      message: 'Level prices updated successfully.',
+    });
+  } catch (error) {
+    console.error('[adminController.updatePlanLevelPrices] error:', error.message);
+    res.status(error.message.includes('not found') ? 404 : 400).json({
+      status: 'fail',
+      message: error.message,
+    });
+  }
+};
+
+// ---------------------------------------------------------------------------
 // Bulk update prices
 // ---------------------------------------------------------------------------
 
@@ -387,10 +679,11 @@ exports.bulkUpdatePrices = async (req, res) => {
 exports.syncDataPlans = async (req, res) => {
   try {
     const ServicePlan = req.models.ServicePlan;
+    const AdminConfig = req.models.AdminConfig;
     if (!ServicePlan) {
       return res.status(500).json({ status: 'error', message: 'ServicePlan model not found.' });
     }
-    const results = await adminService.syncDataPlans(ServicePlan);
+    const results = await adminService.syncDataPlans(ServicePlan, { AdminConfig });
     res.status(200).json({
       status: 'success',
       data: results,
@@ -410,10 +703,11 @@ exports.syncDataPlans = async (req, res) => {
 exports.syncCablePlans = async (req, res) => {
   try {
     const ServicePlan = req.models.ServicePlan;
+    const AdminConfig = req.models.AdminConfig;
     if (!ServicePlan) {
       return res.status(500).json({ status: 'error', message: 'ServicePlan model not found.' });
     }
-    const results = await adminService.syncCablePlans(ServicePlan);
+    const results = await adminService.syncCablePlans(ServicePlan, { AdminConfig });
     res.status(200).json({
       status: 'success',
       data: results,
@@ -433,10 +727,11 @@ exports.syncCablePlans = async (req, res) => {
 exports.syncElectricityPlans = async (req, res) => {
   try {
     const ServicePlan = req.models.ServicePlan;
+    const AdminConfig = req.models.AdminConfig;
     if (!ServicePlan) {
       return res.status(500).json({ status: 'error', message: 'ServicePlan model not found.' });
     }
-    const results = await adminService.syncElectricityPlans(ServicePlan);
+    const results = await adminService.syncElectricityPlans(ServicePlan, { AdminConfig });
     res.status(200).json({
       status: 'success',
       data: results,
@@ -475,27 +770,22 @@ exports.getPlansSummary = async (req, res) => {
 };
 
 // ---------------------------------------------------------------------------
-// Airtime Profit Config
+// Airtime Profit Config (by level)
 // ---------------------------------------------------------------------------
 
 /**
- * @desc    Get airtime profit percentage
+ * @desc    Get airtime profit percentage by level
  * @route   GET /api/v1/admin/config/airtime-profit
  * @access  Private, Admin only
  */
 exports.getAirtimeProfitConfig = async (req, res) => {
   try {
     const AdminConfig = req.models.AdminConfig;
-    if (!AdminConfig) {
-      return res.status(200).json({ status: 'success', data: { profitPercent: 0 } });
-    }
-
-    const config = await AdminConfig.findOne({ key: 'airtimeProfitPercent' });
-    const profitPercent = config ? Number(config.value) : 0;
+    const profitLevels = await adminService.getAirtimeProfitLevels(AdminConfig);
 
     res.status(200).json({
       status: 'success',
-      data: { profitPercent },
+      data: { profitLevels },
     });
   } catch (error) {
     console.error('[adminController.getAirtimeProfitConfig] error:', error.message);
@@ -504,40 +794,470 @@ exports.getAirtimeProfitConfig = async (req, res) => {
 };
 
 /**
- * @desc    Update airtime profit percentage
+ * @desc    Update airtime profit percentage by level
  * @route   PATCH /api/v1/admin/config/airtime-profit
  * @access  Private, Admin only
- * @body    { profitPercent: number }
+ * @body    { profitLevels: { normal: 2, affiliate: 1.5, top_user: 1, api_user: 0.5 } }
  */
 exports.updateAirtimeProfitConfig = async (req, res) => {
   try {
     const AdminConfig = req.models.AdminConfig;
+    const { profitLevels } = req.body;
+
+    if (!profitLevels || typeof profitLevels !== 'object') {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'profitLevels object is required with level keys.',
+      });
+    }
+
+    const updated = await adminService.updateAirtimeProfitLevels(AdminConfig, profitLevels);
+
+    res.status(200).json({
+      status: 'success',
+      data: { profitLevels: updated },
+      message: 'Airtime profit levels updated successfully.',
+    });
+  } catch (error) {
+    console.error('[adminController.updateAirtimeProfitConfig] error:', error.message);
+    res.status(400).json({ status: 'fail', message: error.message });
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Provider Configuration
+// ---------------------------------------------------------------------------
+
+/**
+ * @desc    Get current provider mapping
+ * @route   GET /api/v1/admin/config/providers
+ * @access  Private, Admin only
+ */
+exports.getProviderConfig = async (req, res) => {
+  try {
+    const AdminConfig = req.models.AdminConfig;
+    const providerMap = await providerRegistry.getProviderMap(AdminConfig);
+    const availableProviders = providerRegistry.getAvailableProviders();
+
+    res.status(200).json({
+      status: 'success',
+      data: {
+        providerMap,
+        availableProviders,
+      },
+    });
+  } catch (error) {
+    console.error('[adminController.getProviderConfig] error:', error.message);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+/**
+ * @desc    Update provider mapping for services
+ * @route   PATCH /api/v1/admin/config/providers
+ * @access  Private, Admin only
+ * @body    { airtime: "peyflex", data: "gladtidings", cable: "geodnatech", electricity: "datastation" }
+ */
+exports.updateProviderConfig = async (req, res) => {
+  try {
+    const AdminConfig = req.models.AdminConfig;
+
     if (!AdminConfig) {
       return res.status(500).json({ status: 'error', message: 'AdminConfig model not available.' });
     }
 
-    const { profitPercent } = req.body;
-
-    if (profitPercent === undefined || profitPercent < 0 || profitPercent > 100) {
-      return res.status(400).json({
-        status: 'fail',
-        message: 'profitPercent must be a number between 0 and 100.',
-      });
-    }
-
-    const config = await AdminConfig.findOneAndUpdate(
-      { key: 'airtimeProfitPercent' },
-      { key: 'airtimeProfitPercent', value: Number(profitPercent), description: 'Airtime profit percentage (0-100)' },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
-    );
+    const newMap = await providerRegistry.setProviderMap(AdminConfig, req.body);
 
     res.status(200).json({
       status: 'success',
-      data: { profitPercent: Number(config.value) },
-      message: `Airtime profit percentage updated to ${profitPercent}%.`,
+      data: { providerMap: newMap },
+      message: 'Provider configuration updated successfully.',
     });
   } catch (error) {
-    console.error('[adminController.updateAirtimeProfitConfig] error:', error.message);
+    console.error('[adminController.updateProviderConfig] error:', error.message);
+    res.status(400).json({ status: 'fail', message: error.message });
+  }
+};
+
+/**
+ * @desc    Get list of available provider names
+ * @route   GET /api/v1/admin/config/providers/available
+ * @access  Private, Admin only
+ */
+exports.getAvailableProviders = async (req, res) => {
+  try {
+    const availableProviders = providerRegistry.getAvailableProviders();
+
+    res.status(200).json({
+      status: 'success',
+      data: { providers: availableProviders },
+    });
+  } catch (error) {
+    console.error('[adminController.getAvailableProviders] error:', error.message);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+/**
+ * @desc    Reset provider mapping to defaults (all peyflex)
+ * @route   DELETE /api/v1/admin/config/providers
+ * @access  Private, Admin only
+ */
+exports.resetProviderConfig = async (req, res) => {
+  try {
+    const AdminConfig = req.models.AdminConfig;
+    const defaultMap = await providerRegistry.resetProviderMap(AdminConfig);
+
+    res.status(200).json({
+      status: 'success',
+      data: { providerMap: defaultMap },
+      message: 'Provider configuration reset to defaults (all peyflex).',
+    });
+  } catch (error) {
+    console.error('[adminController.resetProviderConfig] error:', error.message);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Monthly Profits
+// ---------------------------------------------------------------------------
+
+/**
+ * @desc    Get profits grouped by month for a given year
+ * @route   GET /api/v1/admin/profits/monthly
+ * @access  Private, Admin only
+ * @query   ?year=2026 (optional — defaults to current year)
+ */
+exports.getMonthlyProfits = async (req, res) => {
+  try {
+    const Transaction = req.models.Transaction;
+    const year = parseInt(req.query.year) || new Date().getFullYear();
+
+    const startDate = new Date(year, 0, 1);
+    const endDate = new Date(year, 11, 31, 23, 59, 59, 999);
+
+    const result = await Transaction.aggregate([
+      {
+        $match: {
+          status: 'SUCCESS',
+          type: { $in: ['AIRTIME', 'DATA', 'CABLE', 'ELECTRICITY'] },
+          createdAt: { $gte: startDate, $lte: endDate },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            month: { $month: '$createdAt' },
+            type: '$type',
+          },
+          totalProfit: { $sum: '$profit' },
+        },
+      },
+      { $sort: { '_id.month': 1, '_id.type': 1 } },
+    ]);
+
+    // Build monthly breakdown: [{ month: 1, AIRTIME: 0, DATA: 0, CABLE: 0, ELECTRICITY: 0, total: 0 }, ...]
+    const monthlyData = [];
+    for (let m = 1; m <= 12; m++) {
+      const entry = { month: m, AIRTIME: 0, DATA: 0, CABLE: 0, ELECTRICITY: 0, total: 0 };
+      monthlyData.push(entry);
+    }
+
+    for (const row of result) {
+      const m = row._id.month - 1; // 0-indexed
+      const profitInNaira = row.totalProfit / 100;
+      monthlyData[m][row._id.type] = profitInNaira;
+      monthlyData[m].total += profitInNaira;
+    }
+
+    res.status(200).json({
+      status: 'success',
+      data: {
+        year,
+        months: monthlyData,
+      },
+    });
+  } catch (error) {
+    console.error('[adminController.getMonthlyProfits] error:', error.message);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Manual Transfer Account Management
+// ---------------------------------------------------------------------------
+
+/**
+ * @desc    Get all manual transfer bank accounts
+ * @route   GET /api/v1/admin/config/manual-transfer-accounts
+ * @access  Private, Admin only
+ */
+exports.getManualTransferAccounts = async (req, res) => {
+  try {
+    const AdminConfig = req.models.AdminConfig;
+
+    const config = await AdminConfig.findOne({ key: 'manual_transfer_accounts' });
+    const accounts = config?.value || [];
+
+    res.status(200).json({
+      status: 'success',
+      data: { accounts },
+    });
+  } catch (error) {
+    console.error('[adminController.getManualTransferAccounts] error:', error.message);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+/**
+ * @desc    Add a new manual transfer bank account
+ * @route   POST /api/v1/admin/config/manual-transfer-accounts
+ * @access  Private, Admin only
+ * @body    { bankName: string, accountNumber: string, accountName: string }
+ */
+exports.addManualTransferAccount = async (req, res) => {
+  try {
+    const AdminConfig = req.models.AdminConfig;
+    const { bankName, accountNumber, accountName } = req.body;
+
+    if (!bankName || !accountNumber || !accountName) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'bankName, accountNumber, and accountName are required.',
+      });
+    }
+
+    const newAccount = {
+      _id: new (require('mongoose')).Types.ObjectId(),
+      bankName,
+      accountNumber,
+      accountName,
+      isActive: true,
+      createdAt: new Date(),
+    };
+
+    const config = await AdminConfig.findOneAndUpdate(
+      { key: 'manual_transfer_accounts' },
+      {
+        $push: { value: newAccount },
+        $setOnInsert: {
+          key: 'manual_transfer_accounts',
+          description: 'Company bank accounts for manual transfer funding',
+        },
+      },
+      { upsert: true, new: true }
+    );
+
+    res.status(201).json({
+      status: 'success',
+      message: 'Manual transfer account added successfully.',
+      data: { account: newAccount },
+    });
+  } catch (error) {
+    console.error('[adminController.addManualTransferAccount] error:', error.message);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+/**
+ * @desc    Update a manual transfer bank account
+ * @route   PUT /api/v1/admin/config/manual-transfer-accounts/:id
+ * @access  Private, Admin only
+ * @body    { bankName?, accountNumber?, accountName?, isActive? }
+ */
+exports.updateManualTransferAccount = async (req, res) => {
+  try {
+    const AdminConfig = req.models.AdminConfig;
+    const { id } = req.params;
+    const updates = req.body;
+
+    const config = await AdminConfig.findOne({ key: 'manual_transfer_accounts' });
+    if (!config) {
+      return res.status(404).json({ status: 'fail', message: 'No manual transfer accounts found.' });
+    }
+
+    const accounts = config.value || [];
+    const accountIndex = accounts.findIndex(acc => String(acc._id || acc.id) === String(id));
+
+    if (accountIndex === -1) {
+      return res.status(404).json({ status: 'fail', message: 'Account not found.' });
+    }
+
+    // Update fields
+    const allowedFields = ['bankName', 'accountNumber', 'accountName', 'isActive'];
+    for (const field of allowedFields) {
+      if (updates[field] !== undefined) {
+        accounts[accountIndex][field] = updates[field];
+      }
+    }
+
+    config.markModified('value');
+    await config.save();
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Manual transfer account updated successfully.',
+      data: { account: accounts[accountIndex] },
+    });
+  } catch (error) {
+    console.error('[adminController.updateManualTransferAccount] error:', error.message);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+/**
+ * @desc    Delete a manual transfer bank account
+ * @route   DELETE /api/v1/admin/config/manual-transfer-accounts/:id
+ * @access  Private, Admin only
+ */
+exports.deleteManualTransferAccount = async (req, res) => {
+  try {
+    const AdminConfig = req.models.AdminConfig;
+    const { id } = req.params;
+
+    const config = await AdminConfig.findOne({ key: 'manual_transfer_accounts' });
+    if (!config) {
+      return res.status(404).json({ status: 'fail', message: 'No manual transfer accounts found.' });
+    }
+
+    const accounts = config.value || [];
+    const filteredAccounts = accounts.filter(acc => String(acc._id || acc.id) !== String(id));
+
+    if (filteredAccounts.length === accounts.length) {
+      return res.status(404).json({ status: 'fail', message: 'Account not found.' });
+    }
+
+    config.value = filteredAccounts;
+    config.markModified('value');
+    await config.save();
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Manual transfer account deleted successfully.',
+    });
+  } catch (error) {
+    console.error('[adminController.deleteManualTransferAccount] error:', error.message);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Manual Funding Management (approve/reject user manual transfer notifications)
+// ---------------------------------------------------------------------------
+
+/**
+ * @desc    Get all pending MANUAL_FUNDING transactions
+ * @route   GET /api/v1/admin/transactions/manual-funding
+ * @access  Private, Admin only
+ */
+exports.getPendingManualFunding = async (req, res) => {
+  try {
+    const Transaction = req.models.Transaction;
+    const { page = 1, limit = 50, status } = req.query;
+
+    const query = { type: 'MANUAL_FUNDING' };
+    if (status) {
+      query.status = status;
+    } else {
+      query.status = 'PENDING'; // default to pending
+    }
+
+    const transactions = await Transaction.find(query)
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(parseInt(limit))
+      .populate('user', 'fullName email phone')
+      .lean();
+
+    const total = await Transaction.countDocuments(query);
+
+    res.status(200).json({
+      status: 'success',
+      data: { transactions, total, page: parseInt(page), pages: Math.ceil(total / limit) },
+    });
+  } catch (error) {
+    console.error('[adminController.getPendingManualFunding] error:', error.message);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+/**
+ * @desc    Approve a manual funding transaction (credit wallet)
+ * @route   POST /api/v1/admin/wallets/approve-manual-funding
+ * @access  Private, Admin only
+ * @body    { transactionId: string, note?: string }
+ */
+exports.approveManualFunding = async (req, res) => {
+  try {
+    const { transactionId, note } = req.body;
+    const Transaction = req.models.Transaction;
+    const Wallet = req.models.Wallet;
+
+    if (!transactionId) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'transactionId is required.',
+      });
+    }
+
+    const transaction = await Transaction.findById(transactionId);
+    if (!transaction) {
+      return res.status(404).json({ status: 'fail', message: 'Transaction not found.' });
+    }
+
+    if (transaction.type !== 'MANUAL_FUNDING') {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Transaction is not a manual funding request.',
+      });
+    }
+
+    if (transaction.status !== 'PENDING') {
+      return res.status(400).json({
+        status: 'fail',
+        message: `Transaction is already ${transaction.status}. Cannot approve.`,
+      });
+    }
+
+    const userId = transaction.user;
+    const amountKobo = transaction.amount;
+
+    // Find wallet
+    const wallet = await Wallet.findOne({ user: userId });
+    if (!wallet) {
+      return res.status(404).json({ status: 'fail', message: 'Wallet not found for this user.' });
+    }
+
+    const previousBalance = wallet.balance;
+
+    // Credit wallet atomically
+    const updatedWallet = await Wallet.findOneAndUpdate(
+      { user: userId },
+      { $inc: { balance: amountKobo } },
+      { new: true }
+    );
+
+    // Update transaction status
+    await Transaction.findByIdAndUpdate(transactionId, {
+      status: 'SUCCESS',
+      previousBalance,
+      newBalance: updatedWallet.balance,
+      note: note || 'Manual transfer approved by admin',
+    });
+
+    res.status(200).json({
+      status: 'success',
+      message: `Manual transfer approved. ₦${(amountKobo / 100).toLocaleString()} credited to user.`,
+      data: {
+        transactionId,
+        amountNaira: amountKobo / 100,
+        previousBalance: previousBalance / 100,
+        newBalance: updatedWallet.balance / 100,
+      },
+    });
+  } catch (error) {
+    console.error('[adminController.approveManualFunding] error:', error.message);
     res.status(500).json({ status: 'error', message: error.message });
   }
 };

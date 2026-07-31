@@ -45,11 +45,20 @@ const servicePlanSchema = new mongoose.Schema(
     },
 
     // Your reseller price shown to users (in Naira)
-    // This is what users pay
+    // This is what users pay — kept for backward compatibility
     ourPrice: {
       type: Number,
       required: true,
       min: 0,
+    },
+
+    // Level-specific pricing (in Naira)
+    // Each user level can have its own absolute price per plan
+    prices: {
+      normal:    { type: Number, default: 0 },
+      affiliate: { type: Number, default: 0 },
+      top_user:  { type: Number, default: 0 },
+      api_user:  { type: Number, default: 0 },
     },
 
     // Metadata specific to service type
@@ -71,7 +80,7 @@ const servicePlanSchema = new mongoose.Schema(
       default: null,
     },
 
-    // Raw data from Peyflex for debugging
+    // Raw data from provider for debugging
     _providerData: mongoose.Schema.Types.Mixed,
   },
   {

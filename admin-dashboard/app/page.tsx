@@ -24,6 +24,8 @@ interface DashboardStats {
     ELECTRICITY: number;
     total: number;
   };
+  selectedMonth: number | null;
+  selectedYear: number | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -55,6 +57,14 @@ async function fetchWithAuth(endpoint: string) {
   
   return res.json();
 }
+
+// ---------------------------------------------------------------------------
+// Month names
+// ---------------------------------------------------------------------------
+const MONTHS = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December"
+];
 
 // ---------------------------------------------------------------------------
 // Stat Card Component
@@ -98,6 +108,12 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Month/year filter for profits
+  const now = new Date();
+  const [selectedMonth, setSelectedMonth] = useState<number>(now.getMonth() + 1); // 1-indexed
+  const [selectedYear, setSelectedYear] = useState<number>(now.getFullYear());
+  const [useMonthFilter, setUseMonthFilter] = useState(false); // Toggle for all-time vs monthly
+
   useEffect(() => {
     const token = localStorage.getItem("adminToken");
     if (!token) {
@@ -105,13 +121,17 @@ export default function DashboardPage() {
       return;
     }
     fetchDashboard();
-  }, []);
+  }, [selectedMonth, selectedYear, useMonthFilter]);
 
   const fetchDashboard = async () => {
     try {
       setLoading(true);
       setError(null);
-      const data = await fetchWithAuth("/admin/dashboard");
+      let endpoint = "/admin/dashboard";
+      if (useMonthFilter) {
+        endpoint += `?month=${selectedMonth}&year=${selectedYear}`;
+      }
+      const data = await fetchWithAuth(endpoint);
       setStats(data.data);
     } catch (err: any) {
       setError(err.message);
@@ -172,6 +192,57 @@ export default function DashboardPage() {
         </button>
       </div>
 
+      {/* Month/Year Filter */}
+      <div className="bg-white rounded-xl border border-slate-200 p-4">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium text-slate-700">Profit Period:</span>
+            <button
+              onClick={() => setUseMonthFilter(false)}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                !useMonthFilter
+                  ? "bg-blue-600 text-white"
+                  : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+              }`}
+            >
+              All Time
+            </button>
+            <button
+              onClick={() => setUseMonthFilter(true)}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                useMonthFilter
+                  ? "bg-blue-600 text-white"
+                  : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+              }`}
+            >
+              Monthly
+            </button>
+          </div>
+          {useMonthFilter && (
+            <div className="flex items-center gap-2">
+              <select
+                value={selectedMonth}
+                onChange={(e) => setSelectedMonth(parseInt(e.target.value))}
+                className="px-3 py-1.5 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+              >
+                {MONTHS.map((name, idx) => (
+                  <option key={idx + 1} value={idx + 1}>{name}</option>
+                ))}
+              </select>
+              <select
+                value={selectedYear}
+                onChange={(e) => setSelectedYear(parseInt(e.target.value))}
+                className="px-3 py-1.5 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+              >
+                {Array.from({ length: 5 }, (_, i) => now.getFullYear() - i).map(year => (
+                  <option key={year} value={year}>{year}</option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* Stats Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
@@ -207,7 +278,11 @@ export default function DashboardPage() {
       {/* Profits Grid */}
       {p && (
         <div>
-          <h2 className="text-lg font-semibold text-slate-900 mb-3">Total Profits by Service</h2>
+          <h2 className="text-lg font-semibold text-slate-900 mb-3">
+            {useMonthFilter
+              ? `Profits for ${MONTHS[selectedMonth - 1]} ${selectedYear}`
+              : "Total Profits by Service (All Time)"}
+          </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
             <StatCard
               title="Total Profit"

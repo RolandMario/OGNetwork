@@ -7,6 +7,7 @@ const { getAllSecretKeys, getTenantConfigBySecretKey } = require('../services/te
 const { getTenantConnection } = require('../services/tenantDbService');
 const { creditWallet } = require('./walletController');
 const paymentService = require('../services/paymentService');
+const monnifyService = require('../services/monnifyService');
 
 /**
  * @desc    Handle Paystack webhook events
@@ -257,4 +258,124 @@ async function handleDedicatedAccountCredit(data, { Transaction, Wallet, User, t
   } catch (err) {
     console.error(`[Webhook] handleDedicatedAccountCredit error for ref "${paystackRef}":`, err.message);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Monnify Webhook Handler
+// ---------------------------------------------------------------------------
+
+/**
+ * @desc    Handle Monnify webhook events
+ * @route   POST /api/v1/webhooks/monnify
+ * @access  Public — verified via HMAC-SHA512 signature
+ */
+exports.handleMonnifyWebhook = async (req, res) => {
+  console.log('[Webhook] Monnify webhook received.');
+
+  const signature = req.headers['monnify-signature'];
+
+  if (!Buffer.isBuffer(req.body) || !signature) {
+    return res.status(400).send('Webhook: Missing body or signature.');
+  }
+
+  const bodyString = req.body.toString('utf8');
+
+  // Verify signature using Monnify's HMAC-SHA512
+  if (!monnifyService.verifyWebhookSignature(bodyString, signature)) {
+    console.warn('[Webhook] Monnify: Invalid signature.');
+    return res.status(401).send('Webhook: Unauthorized.');
+  }
+
+  let event;
+  try {
+    event = JSON.parse(bodyString);
+  } catch (e) {
+    console.error('[Webhook] Monnify: Failed to parse body:', e.message);
+    return res.status(400).send('Webhook: Invalid JSON body.');
+  }
+
+  console.log(`[Webhook] Monnify event: "${event.eventType}", ref: ${event.eventData?.transactionReference}`);
+
+  // Acknowledge immediately
+  res.status(200).send('Webhook received.');
+
+  // Process asynchronously
+  setImmediate(() => processMonnifyEvent(event));
+};
+
+// ---------------------------------------------------------------------------
+// Monnify event processor
+// ---------------------------------------------------------------------------
+
+async function processMonnifyEvent(event) {
+  const eventType = event.eventType;
+  const data = event.eventData;
+
+  if (!data) {
+    console.error('[Webhook] Monnify: No eventData in payload.');
+    return;
+  }
+
+  // We need to find which tenant this belongs to.
+  // Monnify is configured globally (not per-tenant), so we iterate tenants
+  // and look for a matching transaction reference.
+  const { getAllTenantSecrets } = require('../services/tenantConfigService');
+  const tenants = getAllTenantSecrets();
+
+  for (const tenantId of Object.keys(tenants)) {
+    try {
+      const connection = await getTenantConnection(tenantId);
+      const Transaction = connection.models.Transaction;
+      const Wallet = connection.models.Wallet;
+
+      if (!Transaction || !Wallet) continue;
+
+      // Try to find the transaction by Monnify's transactionReference (stored in paymentGatewayRef)
+      const transaction = await Transaction.findOne({
+        paymentGatewayRef: data.transactionReference,
+        type: 'FUNDING',
+      });
+
+      if (!transaction) continue;
+
+      console.log(`[Webhook] Monnify: Found transaction for tenant "${tenantId}" — ref: ${transaction.transactionReference}`);
+
+      if (eventType === 'SUCCESSFUL_TRANSACTION') {
+        const amountKobo = Math.round(Number(data.amount || data.paidAmount) * 100);
+
+        const { alreadyProcessed, balance } = await creditWallet({
+          transaction,
+          amountKobo,
+          gatewayRef: data.transactionReference,
+          Transaction,
+          Wallet,
+        });
+
+        if (alreadyProcessed) {
+          console.log(`[Webhook] Monnify: Transaction "${transaction.transactionReference}" already processed — skipping.`);
+          return;
+        }
+
+        console.log(
+          `[Webhook] ✅ Wallet funded (Monnify) — tenant: "${tenantId}" | ` +
+          `user: ${transaction.user} | amount: ₦${amountKobo / 100} | new balance: ₦${balance / 100}`
+        );
+        return; // Found and processed, no need to check other tenants
+      }
+
+      if (eventType === 'FAILED_TRANSACTION') {
+        await Transaction.findOneAndUpdate(
+          { _id: transaction._id },
+          { status: 'FAILED' }
+        );
+        console.log(`[Webhook] Monnify: Transaction "${transaction.transactionReference}" marked as FAILED.`);
+        return;
+      }
+
+    } catch (err) {
+      console.error(`[Webhook] Monnify: Error processing for tenant "${tenantId}":`, err.message);
+    }
+  }
+
+  console.log(`[Webhook] Monnify: No matching transaction found for ref "${data.transactionReference}" in any tenant.`);
 }

@@ -11,6 +11,7 @@ import {
   Linking,
   StatusBar,
   ActivityIndicator,
+  ScrollView,
 } from 'react-native';
 import { useDispatch, useSelector } from 'react-redux';
 import { Ionicons } from '@expo/vector-icons';
@@ -25,7 +26,6 @@ import { API_ROUTES } from '../../constants/apiRoutes';
 import {
   initiateFundingStart,
   initiateFundingSuccess,
-  initiateFundingFail,
   verifyFundingSuccess,
   verifyFundingFail,
   fetchBalanceSuccess,
@@ -39,16 +39,25 @@ const PRESET_AMOUNTS = ['1000', '2000', '5000', '10000', '20000', '50000'];
 const FundWalletScreen = ({ navigation }) => {
   const dispatch = useDispatch();
 
-  const [activeTab,   setActiveTab]   = useState('card'); // 'card' | 'transfer'
+  const [activeTab,   setActiveTab]   = useState('card'); // 'card' | 'transfer' | 'manual'
   const [amount,      setAmount]      = useState('');
   const [isLoading,   setIsLoading]   = useState(false);
   const [verifying,   setVerifying]   = useState(false);
 
-  // Dedicated account state
+  // Dedicated account state (Tab 2)
   const [accountDetails,    setAccountDetails]    = useState(null); // { accountNumber, accountName, bankName } | null
   const [loadingAccount,    setLoadingAccount]    = useState(true);
   const [provisioning,      setProvisioning]      = useState(false);
   const [copied,            setCopied]            = useState(false);
+
+  // Manual transfer state (Tab 3)
+  const [manualAccounts,      setManualAccounts]      = useState([]);
+  const [loadingManualAccounts, setLoadingManualAccounts] = useState(true);
+  const [selectedAccountId,   setSelectedAccountId]   = useState(null);
+  const [manualAmount,        setManualAmount]        = useState('');
+  const [manualUserNote,      setManualUserNote]      = useState('');
+  const [submittingManual,    setSubmittingManual]    = useState(false);
+  const [copiedAccountNumber, setCopiedAccountNumber]  = useState(null);
 
   const fundingState = useSelector((state) => state.wallet.fundingState);
 
@@ -57,6 +66,7 @@ const FundWalletScreen = ({ navigation }) => {
   // ---------------------------------------------------------------------------
   useEffect(() => {
     fetchAccountDetails();
+    fetchManualTransferAccounts();
   }, []);
 
   const fetchAccountDetails = async () => {
@@ -81,6 +91,21 @@ const FundWalletScreen = ({ navigation }) => {
       setAccountDetails(null);
     } finally {
       setLoadingAccount(false);
+    }
+  };
+
+  const fetchManualTransferAccounts = async () => {
+    setLoadingManualAccounts(true);
+    try {
+      const response = await apiClient.get(API_ROUTES.WALLET.MANUAL_TRANSFER_ACCOUNTS);
+      if (response.data?.status === 'success') {
+        setManualAccounts(response.data.data.accounts || []);
+      }
+    } catch (err) {
+      console.error('[FundWallet] fetchManualTransferAccounts error:', err.response?.data || err.message);
+      setManualAccounts([]);
+    } finally {
+      setLoadingManualAccounts(false);
     }
   };
 
@@ -118,6 +143,12 @@ const FundWalletScreen = ({ navigation }) => {
     await Clipboard.setStringAsync(accountDetails.accountNumber);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleCopyManualAccountNumber = async (accountNumber) => {
+    await Clipboard.setStringAsync(accountNumber);
+    setCopiedAccountNumber(accountNumber);
+    setTimeout(() => setCopiedAccountNumber(null), 2000);
   };
 
   // ---------------------------------------------------------------------------
@@ -169,10 +200,96 @@ const FundWalletScreen = ({ navigation }) => {
       }
     } catch (error) {
       const msg = error.response?.data?.message || 'Could not initiate payment.';
-      dispatch(initiateFundingFail(msg));
       Alert.alert('Funding Failed', msg);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // Monnify checkout flow
+  // ---------------------------------------------------------------------------
+  const handleInitiateMonnifyFunding = async () => {
+    if (!amount || isNaN(amount) || Number(amount) < 100) {
+      Alert.alert('Invalid Amount', 'Minimum funding amount is ₦100.');
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      const response = await apiClient.post(API_ROUTES.WALLET.FUND_MONNIFY, { amount: Number(amount) });
+
+      if (response.data.status === 'success') {
+        const { paymentUrl, transactionReference } = response.data.data;
+
+        await AsyncStorage.setItem('pendingTransactionRef', transactionReference);
+
+        const supported = await Linking.canOpenURL(paymentUrl);
+        if (supported) {
+          await Linking.openURL(paymentUrl);
+          Alert.alert(
+            'Payment Initiated',
+            'You will be redirected to Monnify checkout to complete payment.',
+            [
+              {
+                text: 'OK',
+                onPress: () => {
+                  setTimeout(() => verifyMonnifyFunding(transactionReference), 3000);
+                },
+              },
+            ]
+          );
+        } else {
+          Alert.alert('Error', 'Cannot open payment link');
+        }
+      }
+    } catch (error) {
+      const msg = error.response?.data?.message || 'Could not initiate Monnify payment.';
+      Alert.alert('Funding Failed', msg);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const verifyMonnifyFunding = async (transactionRef) => {
+    setVerifying(true);
+    try {
+      const response = await apiClient.post(API_ROUTES.WALLET.VERIFY_MONNIFY, {
+        reference: transactionRef,
+      });
+
+      if (response.data.status === 'success') {
+        const newBalance = response.data.data.newBalance;
+
+        if (newBalance) {
+          dispatch(verifyFundingSuccess({ newBalance }));
+          dispatch(fetchBalanceSuccess({ balance: newBalance, currency: 'NGN' }));
+
+          await AsyncStorage.removeItem('pendingTransactionRef');
+
+          Alert.alert(
+            'Success!',
+            `₦${amount} has been successfully added to your wallet.`,
+            [
+              {
+                text: 'OK',
+                onPress: () => {
+                  setAmount('');
+                  navigation.goBack();
+                },
+              },
+            ]
+          );
+        } else {
+          Alert.alert('Pending', response.data.message || 'Payment is being verified. Please check back shortly.');
+        }
+      }
+    } catch (error) {
+      const msg = error.response?.data?.message || 'Verification failed. Please try again.';
+      Alert.alert('Verification Failed', msg);
+    } finally {
+      setVerifying(false);
     }
   };
 
@@ -211,6 +328,52 @@ const FundWalletScreen = ({ navigation }) => {
       Alert.alert('Verification Failed', msg);
     } finally {
       setVerifying(false);
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // Manual Transfer Notify
+  // ---------------------------------------------------------------------------
+  const handleNotifyManualTransfer = async () => {
+    if (!manualAmount || isNaN(manualAmount) || Number(manualAmount) < 100) {
+      Alert.alert('Invalid Amount', 'Minimum funding amount is ₦100.');
+      return;
+    }
+
+    if (!selectedAccountId) {
+      Alert.alert('Select Account', 'Please select a bank account to transfer to.');
+      return;
+    }
+
+    setSubmittingManual(true);
+    try {
+      const response = await apiClient.post(API_ROUTES.WALLET.MANUAL_TRANSFER_NOTIFY, {
+        amount: Number(manualAmount),
+        accountId: selectedAccountId,
+        userNote: manualUserNote,
+      });
+
+      if (response.data.status === 'success') {
+        Alert.alert(
+          'Notification Sent',
+          `Your transfer of ₦${manualAmount} has been recorded. An admin will verify and credit your wallet shortly.`,
+          [
+            {
+              text: 'OK',
+              onPress: () => {
+                setManualAmount('');
+                setManualUserNote('');
+                setSelectedAccountId(null);
+              },
+            },
+          ]
+        );
+      }
+    } catch (error) {
+      const msg = error.response?.data?.message || 'Could not send notification. Please try again.';
+      Alert.alert('Error', msg);
+    } finally {
+      setSubmittingManual(false);
     }
   };
 
@@ -282,6 +445,20 @@ const FundWalletScreen = ({ navigation }) => {
             Bank Transfer
           </Text>
         </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.tabBtn, activeTab === 'manual' && styles.activeTabBtn]}
+          onPress={() => setActiveTab('manual')}
+        >
+          <Ionicons
+            name="cash-outline"
+            size={18}
+            color={activeTab === 'manual' ? COLORS.primary : 'rgba(255,255,255,0.7)'}
+          />
+          <Text style={[styles.tabText, activeTab === 'manual' && styles.activeTabText]}>
+            Manual Transfer
+          </Text>
+        </TouchableOpacity>
       </View>
 
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
@@ -320,10 +497,46 @@ const FundWalletScreen = ({ navigation }) => {
                 </View>
               </View>
 
+              {/* Payment method selection */}
+              <View style={styles.card}>
+                <Text style={styles.label}>Choose payment method</Text>
+                <TouchableOpacity
+                  style={styles.paymentMethodRow}
+                  onPress={handleInitiateFunding}
+                  disabled={isLoading || !amount}
+                >
+                  <View style={styles.paymentMethodInfo}>
+                    <Ionicons name="logo-stackoverflow" size={24} color={COLORS.primary} />
+                    <View style={{ marginLeft: 12 }}>
+                      <Text style={styles.paymentMethodName}>Pay with Paystack</Text>
+                      <Text style={styles.paymentMethodDesc}>Card, Bank, USSD, Bank Transfer</Text>
+                    </View>
+                  </View>
+                  <Ionicons name="chevron-forward" size={20} color={COLORS.textSecondary} />
+                </TouchableOpacity>
+
+                <View style={styles.divider} />
+
+                <TouchableOpacity
+                  style={styles.paymentMethodRow}
+                  onPress={handleInitiateMonnifyFunding}
+                  disabled={isLoading || !amount}
+                >
+                  <View style={styles.paymentMethodInfo}>
+                    <Ionicons name="shield-checkmark" size={24} color="#7C3AED" />
+                    <View style={{ marginLeft: 12 }}>
+                      <Text style={styles.paymentMethodName}>Pay with Monnify</Text>
+                      <Text style={styles.paymentMethodDesc}>Card, Bank Transfer, USSD</Text>
+                    </View>
+                  </View>
+                  <Ionicons name="chevron-forward" size={20} color={COLORS.textSecondary} />
+                </TouchableOpacity>
+              </View>
+
               <View style={styles.infoContainer}>
                 <Ionicons name="shield-checkmark-outline" size={20} color={COLORS.success} />
                 <Text style={styles.infoText}>
-                  Payments are secured by Paystack. You will be redirected to complete the transaction.
+                  Payments are secured by Paystack and Monnify. You will be redirected to complete the transaction.
                 </Text>
               </View>
 
@@ -431,6 +644,128 @@ const FundWalletScreen = ({ navigation }) => {
           </View>
         )}
 
+        {/* ============================== MANUAL TRANSFER TAB ============================== */}
+        {activeTab === 'manual' && (
+          <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+            <View style={styles.card}>
+              <Text style={styles.label}>Transfer to any of our accounts</Text>
+              <Text style={styles.helperText}>
+                Make a transfer to any of the bank accounts below, then enter the amount and let us know.
+                An admin will verify and credit your wallet.
+              </Text>
+            </View>
+
+            {loadingManualAccounts ? (
+              <View style={styles.card}>
+                <ActivityIndicator color={COLORS.primary} size="large" style={{ marginVertical: 20 }} />
+                <Text style={[styles.helperText, { textAlign: 'center' }]}>Loading bank accounts...</Text>
+              </View>
+            ) : manualAccounts.length === 0 ? (
+              <View style={styles.card}>
+                <Ionicons
+                  name="alert-circle-outline"
+                  size={40}
+                  color={COLORS.textSecondary}
+                  style={{ alignSelf: 'center', marginBottom: 10 }}
+                />
+                <Text style={[styles.label, { textAlign: 'center' }]}>
+                  No transfer accounts available
+                </Text>
+                <Text style={[styles.helperText, { textAlign: 'center' }]}>
+                  Manual transfer is not available at this time. Please use Card/Bank checkout instead.
+                </Text>
+              </View>
+            ) : (
+              <>
+                {/* List of bank accounts */}
+                {manualAccounts.map((acc) => {
+                  const isSelected = selectedAccountId === acc.id;
+                  const isCopied = copiedAccountNumber === acc.accountNumber;
+                  return (
+                    <TouchableOpacity
+                      key={acc.id}
+                      style={[styles.manualAccountCard, isSelected && styles.selectedAccountCard]}
+                      onPress={() => setSelectedAccountId(acc.id)}
+                      activeOpacity={0.7}
+                    >
+                      <View style={styles.manualAccountHeader}>
+                        <View style={styles.radioOuter}>
+                          {isSelected && <View style={styles.radioInner} />}
+                        </View>
+                        <Text style={styles.manualBankName}>{acc.bankName}</Text>
+                      </View>
+
+                      <View style={styles.manualAccountDetails}>
+                        <View style={styles.manualAccountNumberRow}>
+                          <Text style={styles.manualAccountNumber}>{acc.accountNumber}</Text>
+                          <TouchableOpacity
+                            onPress={() => handleCopyManualAccountNumber(acc.accountNumber)}
+                            style={styles.copyBtn}
+                          >
+                            <Ionicons
+                              name={isCopied ? 'checkmark-circle' : 'copy-outline'}
+                              size={18}
+                              color={isCopied ? '#27AE60' : COLORS.primary}
+                            />
+                            <Text style={[styles.copyText, isCopied && { color: '#27AE60' }]}>
+                              {isCopied ? 'Copied' : 'Copy'}
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                        <Text style={styles.manualAccountName}>{acc.accountName}</Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+
+                {/* Amount and note inputs */}
+                <View style={styles.card}>
+                  <Text style={styles.label}>How much did you transfer?</Text>
+                  <View style={styles.inputWrapper}>
+                    <Text style={styles.currencySymbol}>₦</Text>
+                    <CustomInput
+                      placeholder="0.00"
+                      value={manualAmount}
+                      onChangeText={setManualAmount}
+                      keyboardType="numeric"
+                      style={styles.customInputStyle}
+                      containerStyle={{ flex: 1, marginBottom: 0 }}
+                    />
+                  </View>
+                  <Text style={styles.helperText}>Minimum amount: ₦100</Text>
+
+                  <Text style={[styles.label, { marginTop: 10 }]}>Note (optional)</Text>
+                  <CustomInput
+                    placeholder="e.g. Payment for data subscription"
+                    value={manualUserNote}
+                    onChangeText={setManualUserNote}
+                    style={styles.customInputStyle}
+                    containerStyle={{ marginBottom: 0 }}
+                  />
+                </View>
+
+                <View style={styles.infoContainer}>
+                  <Ionicons name="information-circle-outline" size={20} color={COLORS.primary} />
+                  <Text style={styles.infoText}>
+                    After making the transfer, tap "I've Made the Transfer" below. An admin will
+                    verify and credit your wallet. This may take a few minutes during business hours.
+                  </Text>
+                </View>
+
+                <View style={{ marginBottom: 30 }}>
+                  <CustomButton
+                    label={submittingManual ? 'Submitting...' : "I've Made the Transfer"}
+                    onPress={handleNotifyManualTransfer}
+                    isLoading={submittingManual}
+                    variant="primary"
+                    disabled={!manualAmount || !selectedAccountId || submittingManual}
+                  />
+                </View>
+              </>
+            )}
+          </ScrollView>
+        )}
+
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -462,16 +797,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
+    gap: 4,
     paddingVertical: 10,
     borderRadius: 10,
   },
   activeTabBtn: { backgroundColor: '#FFF' },
-  tabText: { ...FONTS.medium, fontSize: 13, color: 'rgba(255,255,255,0.7)' },
+  tabText: { ...FONTS.medium, fontSize: 12, color: 'rgba(255,255,255,0.7)' },
   activeTabText: { color: COLORS.primary, ...FONTS.bold },
 
   content: { padding: SIZES.padding, flex: 1 },
-  card: { backgroundColor: COLORS.surfaceWhite, padding: 24, borderRadius: SIZES.radius, ...SHADOWS.light },
+  card: { backgroundColor: COLORS.surfaceWhite, padding: 24, borderRadius: SIZES.radius, ...SHADOWS.light, marginBottom: 12 },
   label: { ...FONTS.medium, color: COLORS.textSecondary, fontSize: SIZES.body1, marginBottom: 15 },
   inputWrapper: { flexDirection: 'row', alignItems: 'center', marginBottom: 5 },
   currencySymbol: { ...FONTS.bold, fontSize: 24, color: COLORS.textPrimary, marginRight: 10, marginTop: -20 },
@@ -509,6 +844,97 @@ const styles = StyleSheet.create({
   copyBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, backgroundColor: '#fff', borderWidth: 1, borderColor: COLORS.border },
   copyText: { ...FONTS.medium, fontSize: 12, color: COLORS.primary },
   accountName: { ...FONTS.medium, fontSize: SIZES.body2, color: COLORS.textSecondary, marginTop: 10 },
+
+  // Payment method selection styles
+  paymentMethodRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+  },
+  paymentMethodInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  paymentMethodName: {
+    ...FONTS.medium,
+    fontSize: SIZES.body1,
+    color: COLORS.textPrimary,
+  },
+  paymentMethodDesc: {
+    ...FONTS.regular,
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    marginTop: 2,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: COLORS.border,
+    marginVertical: 4,
+  },
+
+  // Manual transfer account styles
+  manualAccountCard: {
+    backgroundColor: COLORS.surfaceWhite,
+    borderRadius: SIZES.radius,
+    padding: 16,
+    marginBottom: 10,
+    borderWidth: 2,
+    borderColor: COLORS.border,
+    ...SHADOWS.light,
+  },
+  selectedAccountCard: {
+    borderColor: COLORS.primary,
+    backgroundColor: '#F0F7FF',
+  },
+  manualAccountHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  radioOuter: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: COLORS.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  radioInner: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: COLORS.primary,
+  },
+  manualBankName: {
+    ...FONTS.bold,
+    fontSize: SIZES.body1,
+    color: COLORS.textPrimary,
+    textTransform: 'uppercase',
+  },
+  manualAccountDetails: {
+    marginLeft: 30,
+  },
+  manualAccountNumberRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  manualAccountNumber: {
+    ...FONTS.bold,
+    fontSize: 22,
+    color: COLORS.primary,
+    letterSpacing: 1.5,
+  },
+  manualAccountName: {
+    ...FONTS.medium,
+    fontSize: SIZES.body2,
+    color: COLORS.textSecondary,
+    marginTop: 6,
+  },
 });
 
 export default FundWalletScreen;

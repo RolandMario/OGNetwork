@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001/api/v1";
 
+const USER_LEVELS = ['normal', 'affiliate', 'top_user', 'api_user'];
+
 async function fetchWithAuth(endpoint: string, options?: RequestInit) {
   const token = localStorage.getItem("adminToken");
   const tenantId = localStorage.getItem("tenantId") || "demo";
@@ -32,17 +34,49 @@ async function fetchWithAuth(endpoint: string, options?: RequestInit) {
   return res.json();
 }
 
+interface ProviderMap {
+  airtime: string;
+  data: string;
+  cable: string;
+  electricity: string;
+}
+
+const AVAILABLE_PROVIDERS = ['peyflex', 'gladtidings', 'datastation', 'geodnatech'];
+const SERVICE_LABELS: Record<string, string> = {
+  airtime: 'Airtime',
+  data: 'Data',
+  cable: 'Cable TV',
+  electricity: 'Electricity',
+};
+
 export default function SettingsPage() {
   const router = useRouter();
   const [apiUrl, setApiUrl] = useState(API_BASE);
   const [saved, setSaved] = useState(false);
 
-  // Airtime profit state
-  const [airtimeProfitPercent, setAirtimeProfitPercent] = useState(0);
+  // Airtime profit by level state
+  const [airtimeProfitLevels, setAirtimeProfitLevels] = useState<Record<string, number>>({
+    normal: 0,
+    affiliate: 0,
+    top_user: 0,
+    api_user: 0,
+  });
   const [profitLoading, setProfitLoading] = useState(true);
   const [profitSaving, setProfitSaving] = useState(false);
   const [profitSaved, setProfitSaved] = useState(false);
   const [profitError, setProfitError] = useState<string | null>(null);
+
+  // Provider config state
+  const [providerMap, setProviderMap] = useState<ProviderMap>({
+    airtime: 'peyflex',
+    data: 'peyflex',
+    cable: 'peyflex',
+    electricity: 'peyflex',
+  });
+  const [providerLoading, setProviderLoading] = useState(true);
+  const [providerSaving, setProviderSaving] = useState(false);
+  const [providerSaved, setProviderSaved] = useState(false);
+  const [providerError, setProviderError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!localStorage.getItem("adminToken")) {
@@ -50,13 +84,19 @@ export default function SettingsPage() {
       return;
     }
     fetchAirtimeProfitConfig();
+    fetchProviderConfig();
   }, []);
 
   const fetchAirtimeProfitConfig = async () => {
     try {
       setProfitLoading(true);
       const data = await fetchWithAuth("/admin/config/airtime-profit");
-      setAirtimeProfitPercent(data.data.profitPercent);
+      setAirtimeProfitLevels(data.data.profitLevels || {
+        normal: 0,
+        affiliate: 0,
+        top_user: 0,
+        api_user: 0,
+      });
     } catch (err: any) {
       setProfitError(err.message);
     } finally {
@@ -70,7 +110,7 @@ export default function SettingsPage() {
       setProfitError(null);
       await fetchWithAuth("/admin/config/airtime-profit", {
         method: "PATCH",
-        body: JSON.stringify({ profitPercent: airtimeProfitPercent }),
+        body: JSON.stringify({ profitLevels: airtimeProfitLevels }),
       });
       setProfitSaved(true);
       setTimeout(() => setProfitSaved(false), 3000);
@@ -78,6 +118,57 @@ export default function SettingsPage() {
       setProfitError(err.message);
     } finally {
       setProfitSaving(false);
+    }
+  };
+
+  const fetchProviderConfig = async () => {
+    try {
+      setProviderLoading(true);
+      const data = await fetchWithAuth("/admin/config/providers");
+      setProviderMap(data.data.providerMap);
+    } catch (err: any) {
+      setProviderError(err.message);
+    } finally {
+      setProviderLoading(false);
+    }
+  };
+
+  const handleProviderChange = (service: string, provider: string) => {
+    setProviderMap(prev => ({ ...prev, [service]: provider }));
+  };
+
+  const handleSaveProviderConfig = async () => {
+    try {
+      setProviderSaving(true);
+      setProviderError(null);
+      await fetchWithAuth("/admin/config/providers", {
+        method: "PATCH",
+        body: JSON.stringify(providerMap),
+      });
+      setProviderSaved(true);
+      setTimeout(() => setProviderSaved(false), 3000);
+    } catch (err: any) {
+      setProviderError(err.message);
+    } finally {
+      setProviderSaving(false);
+    }
+  };
+
+  const handleResetProviders = async () => {
+    if (!confirm("Reset all provider mappings to defaults (all peyflex)?")) return;
+    try {
+      setProviderSaving(true);
+      setProviderError(null);
+      const data = await fetchWithAuth("/admin/config/providers", {
+        method: "DELETE",
+      });
+      setProviderMap(data.data.providerMap);
+      setProviderSaved(true);
+      setTimeout(() => setProviderSaved(false), 3000);
+    } catch (err: any) {
+      setProviderError(err.message);
+    } finally {
+      setProviderSaving(false);
     }
   };
 
@@ -100,11 +191,79 @@ export default function SettingsPage() {
         <p className="text-sm text-slate-500 mt-1">Configure your admin panel</p>
       </div>
 
-      {/* Airtime Profit Configuration */}
+      {/* Provider Configuration */}
       <div className="bg-white rounded-xl border border-slate-200 p-6">
-        <h2 className="text-lg font-semibold text-slate-900 mb-4">Airtime Profit Configuration</h2>
+        <h2 className="text-lg font-semibold text-slate-900 mb-4">Provider Configuration</h2>
         <p className="text-sm text-slate-500 mb-4">
-          Set the profit percentage applied to all airtime purchases. For example, 2% means ₦2 profit on a ₦100 airtime purchase.
+          Choose which VTU provider handles each service type. API keys are managed via <code className="bg-slate-100 px-1 rounded">.env</code> file.
+        </p>
+
+        {providerLoading ? (
+          <div className="flex items-center gap-2 text-sm text-slate-500">
+            <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+            Loading provider configuration...
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {Object.entries(providerMap).map(([service, currentProvider]) => (
+              <div key={service} className="flex items-center justify-between py-2 border-b border-slate-100 last:border-b-0">
+                <label className="text-sm font-medium text-slate-700">
+                  {SERVICE_LABELS[service] || service}
+                </label>
+                <select
+                  value={currentProvider}
+                  onChange={(e) => handleProviderChange(service, e.target.value)}
+                  className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white"
+                >
+                  {AVAILABLE_PROVIDERS.map(p => (
+                    <option key={p} value={p}>
+                      {p.charAt(0).toUpperCase() + p.slice(1)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ))}
+
+            {providerError && (
+              <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                {providerError}
+              </p>
+            )}
+
+            <div className="flex items-center gap-3 pt-2">
+              <button
+                onClick={handleSaveProviderConfig}
+                disabled={providerSaving}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {providerSaving ? (
+                  <span className="flex items-center gap-2">
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Saving...
+                  </span>
+                ) : providerSaved ? (
+                  "✓ Saved"
+                ) : (
+                  "Save Provider Configuration"
+                )}
+              </button>
+              <button
+                onClick={handleResetProviders}
+                disabled={providerSaving}
+                className="px-4 py-2 border border-red-300 text-red-600 rounded-lg text-sm font-medium hover:bg-red-50 disabled:opacity-50"
+              >
+                Reset to Defaults
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Airtime Profit by Level Configuration */}
+      <div className="bg-white rounded-xl border border-slate-200 p-6">
+        <h2 className="text-lg font-semibold text-slate-900 mb-4">Airtime Profit by User Level</h2>
+        <p className="text-sm text-slate-500 mb-4">
+          Set the profit percentage applied to airtime purchases for each user level. For example, 2% for Normal means ₦2 profit on a ₦100 airtime purchase for normal users.
         </p>
         {profitLoading ? (
           <div className="flex items-center gap-2 text-sm text-slate-500">
@@ -113,38 +272,43 @@ export default function SettingsPage() {
           </div>
         ) : (
           <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">
-                Airtime Profit Percentage
-              </label>
-              <div className="flex items-center gap-3">
-                <input
-                  type="range"
-                  min="0"
-                  max="10"
-                  step="0.5"
-                  value={airtimeProfitPercent}
-                  onChange={(e) => setAirtimeProfitPercent(parseFloat(e.target.value))}
-                  className="flex-1 h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
-                />
-                <div className="flex items-center gap-1 min-w-[80px]">
-                  <input
-                    type="number"
-                    min="0"
-                    max="100"
-                    step="0.5"
-                    value={airtimeProfitPercent}
-                    onChange={(e) => setAirtimeProfitPercent(parseFloat(e.target.value) || 0)}
-                    className="w-16 px-2 py-1 border border-slate-300 rounded-lg text-sm text-center focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                  />
-                  <span className="text-sm font-medium text-slate-600">%</span>
+            {USER_LEVELS.map((level) => {
+              const formatLevel = level.replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase());
+              return (
+                <div key={level} className="flex items-center justify-between py-2 border-b border-slate-100 last:border-b-0">
+                  <label className="text-sm font-medium text-slate-700 w-32">
+                    {formatLevel}
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="range"
+                      min="0"
+                      max="10"
+                      step="0.5"
+                      value={airtimeProfitLevels[level] || 0}
+                      onChange={(e) => {
+                        const val = parseFloat(e.target.value);
+                        setAirtimeProfitLevels(prev => ({ ...prev, [level]: val }));
+                      }}
+                      className="w-24 h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                    />
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.5"
+                      value={airtimeProfitLevels[level] || 0}
+                      onChange={(e) => {
+                        const val = parseFloat(e.target.value) || 0;
+                        setAirtimeProfitLevels(prev => ({ ...prev, [level]: val }));
+                      }}
+                      className="w-16 px-2 py-1 border border-slate-300 rounded-lg text-sm text-center focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                    />
+                    <span className="text-sm font-medium text-slate-600">%</span>
+                  </div>
                 </div>
-              </div>
-              <p className="text-xs text-slate-500 mt-1">
-                Current value: <span className="font-semibold text-slate-700">{airtimeProfitPercent}%</span>
-                {" — "}Example: ₦100 airtime → ₦{(airtimeProfitPercent).toFixed(1)} profit
-              </p>
-            </div>
+              );
+            })}
             {profitError && (
               <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
                 {profitError}
@@ -163,7 +327,7 @@ export default function SettingsPage() {
               ) : profitSaved ? (
                 "✓ Saved"
               ) : (
-                "Save Profit Percentage"
+                "Save Profit Levels"
               )}
             </button>
           </div>

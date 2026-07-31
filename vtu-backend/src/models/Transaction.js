@@ -2,7 +2,11 @@ const mongoose = require('mongoose');
 
 const TransactionSchema = new mongoose.Schema({
   user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  type: { type: String, enum: ['FUNDING', 'AIRTIME', 'DATA', 'CABLE', 'ELECTRICITY'], required: true },
+  type: { 
+    type: String, 
+    enum: ['FUNDING', 'AIRTIME', 'DATA', 'CABLE', 'ELECTRICITY', 'ADMIN_CREDIT', 'ADMIN_DEBIT', 'MANUAL_FUNDING'], 
+    required: true 
+  },
   amount: { type: Number, required: true }, // In base unit (Kobo)
   
   // Status flow: PENDING -> SUCCESS or FAILED
@@ -15,12 +19,20 @@ const TransactionSchema = new mongoose.Schema({
   details: {
     beneficiary: String, // Phone number or meter number
     network: String,     // MTN, Airtel
-    planId: String       // Data plan ID if applicable
+    planId: String,      // Data plan ID if applicable
+    paymentMethod: String, // 'paystack', 'monnify', 'manual_transfer'
+    bankName: String,      // For manual transfer
+    accountNumber: String, // For manual transfer
+    accountName: String,   // For manual transfer
+    userNote: String,      // User note for manual transfer
   },
+
+  // Admin note for manual wallet operations
+  note: { type: String, default: '' },
 
   // References for reconciliation
   transactionReference: { type: String, unique: true, required: true }, // Internal unique Ref
-  paymentGatewayRef: String, // Reference from Paystack/Flutterwave (for funding)
+  paymentGatewayRef: String, // Reference from Paystack/Monnify (for funding)
   providerRef: String,       // Reference from the VTU API provider (for purchases)
   
   previousBalance: Number,

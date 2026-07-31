@@ -1,3 +1,5 @@
+'use strict';
+
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
@@ -19,6 +21,13 @@ const UserSchema = new mongoose.Schema({
 
   role: { type: String, enum: ['user', 'admin', 'superadmin'], default: 'user' },
   isActive: { type: Boolean, default: true },
+
+  // User level / tier — determines which price they pay
+  level: {
+    type: String,
+    enum: ['normal', 'affiliate', 'top_user', 'api_user'],
+    default: 'normal',
+  },
 
   // ---------------------------------------------------------------------------
   // Paystack Dedicated Virtual Account (DVA)

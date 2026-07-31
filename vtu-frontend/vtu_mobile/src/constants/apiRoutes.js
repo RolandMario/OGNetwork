@@ -15,11 +15,17 @@ export const API_ROUTES = {
     TRANSACTION_HISTORY:'/user/transactions/my-history',
   },
   WALLET: {
-    GET_BALANCE:      '/user/wallet/balance',
-    FUND:             '/user/wallet/fund',
-    VERIFY:           '/user/wallet/verify',
-    ACCOUNT_DETAILS:  '/user/wallet/account-details',
-    PROVISION_ACCOUNT:'/user/wallet/provision-account',
+    GET_BALANCE:          '/user/wallet/balance',
+    FUND:                 '/user/wallet/fund',
+    VERIFY:               '/user/wallet/verify',
+    ACCOUNT_DETAILS:      '/user/wallet/account-details',
+    PROVISION_ACCOUNT:    '/user/wallet/provision-account',
+    // Monnify
+    FUND_MONNIFY:         '/user/wallet/fund/monnify',
+    VERIFY_MONNIFY:       '/user/wallet/verify/monnify',
+    // Manual Transfer
+    MANUAL_TRANSFER_ACCOUNTS: '/user/wallet/manual-transfer-accounts',
+    MANUAL_TRANSFER_NOTIFY:   '/user/wallet/manual-transfer-notify',
   },
   VTU: {
     // DB plans endpoint — returns ourPrice for all services

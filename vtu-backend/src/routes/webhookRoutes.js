@@ -6,6 +6,7 @@ const webhookController = require('../controllers/webhookController');
 // Route for Paystack webhooks
 router.post('/paystack', webhookController.handlePaystackWebhook);
 
-// Add routes for other gateways here (e.g., router.post('/flutterwave', ...))
+// Route for Monnify webhooks
+router.post('/monnify', webhookController.handleMonnifyWebhook);
 
 module.exports = router;
