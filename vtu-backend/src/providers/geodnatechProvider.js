@@ -32,9 +32,21 @@ const NETWORK_MAP = {
 
 async function getAirtimeNetworks() {
   try {
-    const response = await apiClient.get('/user/');
-    return response.data;
+    // Geodnatech's /user/ response groups networks as MTN_PLAN, GLO_PLAN, etc.
+    // Normalize to the standard { networks: [{ id, name }] } shape used by the frontend.
+    const data = await _fetchUser();
+    const dataplans = data?.Dataplans || {};
+
+    const networks = Object.keys(dataplans)
+      .filter((key) => GEODNATECH_NETWORK_MAP[key])
+      .map((key) => ({
+        id:   GEODNATECH_NETWORK_MAP[key],
+        name: GEODNATECH_NETWORK_MAP[key].toUpperCase(),
+      }));
+
+    return { networks };
   } catch (error) {
+    _clearUserCache();
     throw new Error(`[geodnatech] getAirtimeNetworks: ${extractErrorMessage(error)}`);
   }
 }

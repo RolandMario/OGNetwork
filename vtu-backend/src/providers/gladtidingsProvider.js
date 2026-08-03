@@ -31,9 +31,21 @@ const NETWORK_MAP = {
 
 async function getAirtimeNetworks() {
   try {
-    const response = await apiClient.get('/services/');
-    return response.data;
+    // Gladtidings returns services under data_plans with a `name` field per network.
+    // Normalize to the standard { networks: [{ id, name }] } shape used by the frontend.
+    const data = await _fetchServices();
+    const rawNetworks = data?.data_plans || data?.networks || [];
+
+    const networks = rawNetworks
+      .map((entry) => ({
+        id:   (NETWORK_NAME_MAP[entry.name] || entry.name || '').toLowerCase(),
+        name: entry.name || entry.id || '',
+      }))
+      .filter((n) => n.id && n.name);
+
+    return { networks };
   } catch (error) {
+    _clearServicesCache();
     throw new Error(`[gladtidings] getAirtimeNetworks: ${extractErrorMessage(error)}`);
   }
 }

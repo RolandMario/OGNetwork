@@ -64,8 +64,21 @@ if (response.data.status === 'success') {
   navigation.replace('MainNavigator');
 }
     } catch (error) {
-      const errorMessage =
-        error.response?.data?.message || 'Login failed due to a server error.';
+      // Log full error details for debugging (network errors have no .response)
+      console.log('Login Error Full:', {
+        message: error.message,
+        status: error.response?.status,
+        data: error.response?.data,
+      });
+
+      // 'Incorrect email/phone or password.' has no .data.user — handle it
+      let errorMessage = error.response?.data?.message || error.message || 'Login failed due to a server error.';
+
+      // If backend sent a fail status with a message, surface it
+      if (error.response?.data?.status === 'fail' && error.response.data.message) {
+        errorMessage = error.response.data.message;
+      }
+
       dispatch(loginFail(errorMessage));
       console.log('Login Failed', errorMessage);
     } finally {

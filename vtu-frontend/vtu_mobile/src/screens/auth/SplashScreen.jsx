@@ -96,7 +96,7 @@ const SplashScreen = ({ navigation }) => {
 
         {/* OPTION B — Text logo (default, no image needed) */}
         <Text style={styles.logoText}>
-          smart<Text style={styles.logoAccent}>Env</Text>
+          OG<Text style={styles.logoAccent}>NETWORK</Text>
         </Text>
       </Animated.View>
 

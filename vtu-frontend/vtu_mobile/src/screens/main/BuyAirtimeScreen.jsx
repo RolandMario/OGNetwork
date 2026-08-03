@@ -61,37 +61,62 @@ const BuyAirtimeScreen = ({ navigation }) => {
     }
   }, [authUser]);
 
+  // Hard-coded fallback networks — used if the API returns an empty/invalid list
+  const FALLBACK_NETWORKS = [
+    { id: 'mtn',     identifier: 'mtn',     label: 'MTN',     color: '#FFCC00' },
+    { id: 'airtel',  identifier: 'airtel',  label: 'Airtel',  color: '#E60000' },
+    { id: 'glo',     identifier: 'glo',     label: 'Glo',     color: '#00C300' },
+    { id: '9mobile', identifier: '9mobile', label: '9mobile', color: '#006400' },
+  ];
+
   useEffect(() => {
     const fetchNetworks = async () => {
       setLoadingNetworks(true);
       try {
         // FIX: correct endpoint path
         const response = await apiClient.get(API_ROUTES.VTU.AIRTIME_NETWORKS);
-        const raw = response.data?.data?.networks || [];
+        console.log('[BuyAirtime] Networks response:', JSON.stringify(response.data));
 
-        // Map Peyflex { id, name } → { id, label, color, identifier }
-        const mapped = raw.map((net) => ({
-          id:         net.id,
-          identifier: net.id,
-          label:      net.name,
-          color:      NETWORK_COLORS[net.id] || '#888888',
-        }));
+        // Handle multiple response shapes:
+        //  - { data: { networks: [{ id, name }] } }   (our standard / Peyflex)
+        //  - { data: { networks: [{ identifier }] } } (some providers)
+        //  - { data: { data_plans: [...] } }          (raw Gladtidings)
+        const body = response.data?.data || {};
+        let raw = body.networks || [];
 
-        setNetworks(mapped);
+        // Fallback 1: if no `networks` key but `data_plans` exists (raw provider shape),
+        // extract unique network names.
+        if (!raw.length && Array.isArray(body.data_plans)) {
+          raw = body.data_plans
+            .map((entry) => ({ id: entry.name, name: entry.name }))
+            .filter((entry, i, arr) => arr.findIndex((e) => e.id === entry.id) === i);
+        }
+
+        // Map to what the UI needs
+        const mapped = raw
+          .map((net) => {
+            const id = net.id || net.identifier || net.name;
+            return {
+              id:         String(id || '').toLowerCase(),
+              identifier: id,
+              label:      net.name || net.label || id,
+              color:      NETWORK_COLORS[String(id || '').toLowerCase()] || '#888888',
+            };
+          })
+          .filter((n) => n.id && n.label);
+
+        // If API returned nothing usable, fall back to hard-coded networks
+        const finalNetworks = mapped.length ? mapped : FALLBACK_NETWORKS;
+        setNetworks(finalNetworks);
 
         // Default to first network if mtn not present
-        if (mapped.length && !mapped.find((n) => n.id === 'mtn')) {
-          setSelectedNetwork(mapped[0].id);
+        if (finalNetworks.length && !finalNetworks.find((n) => n.id === 'mtn')) {
+          setSelectedNetwork(finalNetworks[0].id);
         }
       } catch (err) {
         console.error('[BuyAirtime] Failed to load networks:', err.message);
         // Fallback to static networks so the screen remains usable
-        setNetworks([
-          { id: 'mtn',     identifier: 'mtn',     label: 'MTN',     color: '#FFCC00' },
-          { id: 'airtel',  identifier: 'airtel',  label: 'Airtel',  color: '#E60000' },
-          { id: 'glo',     identifier: 'glo',     label: 'Glo',     color: '#00C300' },
-          { id: '9mobile', identifier: '9mobile', label: '9mobile', color: '#006400' },
-        ]);
+        setNetworks(FALLBACK_NETWORKS);
       } finally {
         setLoadingNetworks(false);
       }

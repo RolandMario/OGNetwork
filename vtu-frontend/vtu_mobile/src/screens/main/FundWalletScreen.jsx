@@ -152,59 +152,59 @@ const FundWalletScreen = ({ navigation }) => {
   };
 
   // ---------------------------------------------------------------------------
-  // Card/Bank checkout flow (unchanged)
+  // Card/Bank checkout flow (Paystack — COMMENTED OUT)
   // ---------------------------------------------------------------------------
-  const handleInitiateFunding = async () => {
-    if (!amount || isNaN(amount) || Number(amount) < 100) {
-      Alert.alert('Invalid Amount', 'Minimum funding amount is ₦100.');
-      return;
-    }
-
-    dispatch(initiateFundingStart());
-    setIsLoading(true);
-
-    try {
-      const response = await apiClient.post(API_ROUTES.WALLET.FUND, { amount: Number(amount) });
-
-      if (response.data.status === 'success') {
-        const { paymentUrl, transactionReference } = response.data.data;
-
-        await AsyncStorage.setItem('pendingTransactionRef', transactionReference);
-
-        dispatch(
-          initiateFundingSuccess({
-            transactionRef: transactionReference,
-            amount: Number(amount),
-            paymentUrl,
-          })
-        );
-
-        const supported = await Linking.canOpenURL(paymentUrl);
-        if (supported) {
-          await Linking.openURL(paymentUrl);
-          Alert.alert(
-            'Payment Initiated',
-            'You will be redirected to complete payment. Your wallet will be credited upon successful payment.',
-            [
-              {
-                text: 'OK',
-                onPress: () => {
-                  setTimeout(() => verifyFunding(transactionReference), 3000);
-                },
-              },
-            ]
-          );
-        } else {
-          Alert.alert('Error', 'Cannot open payment link');
-        }
-      }
-    } catch (error) {
-      const msg = error.response?.data?.message || 'Could not initiate payment.';
-      Alert.alert('Funding Failed', msg);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  // const handleInitiateFunding = async () => {
+  //   if (!amount || isNaN(amount) || Number(amount) < 100) {
+  //     Alert.alert('Invalid Amount', 'Minimum funding amount is ₦100.');
+  //     return;
+  //   }
+  //
+  //   dispatch(initiateFundingStart());
+  //   setIsLoading(true);
+  //
+  //   try {
+  //     const response = await apiClient.post(API_ROUTES.WALLET.FUND, { amount: Number(amount) });
+  //
+  //     if (response.data.status === 'success') {
+  //       const { paymentUrl, transactionReference } = response.data.data;
+  //
+  //       await AsyncStorage.setItem('pendingTransactionRef', transactionReference);
+  //
+  //       dispatch(
+  //         initiateFundingSuccess({
+  //           transactionRef: transactionReference,
+  //           amount: Number(amount),
+  //           paymentUrl,
+  //         })
+  //       );
+  //
+  //       const supported = await Linking.canOpenURL(paymentUrl);
+  //       if (supported) {
+  //         await Linking.openURL(paymentUrl);
+  //         Alert.alert(
+  //           'Payment Initiated',
+  //           'You will be redirected to complete payment. Your wallet will be credited upon successful payment.',
+  //           [
+  //             {
+  //               text: 'OK',
+  //               onPress: () => {
+  //                 setTimeout(() => verifyFunding(transactionReference), 3000);
+  //               },
+  //             },
+  //           ]
+  //         );
+  //       } else {
+  //         Alert.alert('Error', 'Cannot open payment link');
+  //       }
+  //     }
+  //   } catch (error) {
+  //     const msg = error.response?.data?.message || 'Could not initiate payment.';
+  //     Alert.alert('Funding Failed', msg);
+  //   } finally {
+  //     setIsLoading(false);
+  //   }
+  // };
 
   // ---------------------------------------------------------------------------
   // Monnify checkout flow
@@ -293,43 +293,43 @@ const FundWalletScreen = ({ navigation }) => {
     }
   };
 
-  const verifyFunding = async (transactionRef) => {
-    setVerifying(true);
-    try {
-      const response = await apiClient.post(API_ROUTES.WALLET.VERIFY, {
-        reference: transactionRef,
-      });
-
-      if (response.data.status === 'success') {
-        const newBalance = response.data.data.newBalance;
-
-        dispatch(verifyFundingSuccess({ newBalance }));
-        dispatch(fetchBalanceSuccess({ balance: newBalance, currency: 'NGN' }));
-
-        await AsyncStorage.removeItem('pendingTransactionRef');
-
-        Alert.alert(
-          'Success!',
-          `₦${amount} has been successfully added to your wallet.`,
-          [
-            {
-              text: 'OK',
-              onPress: () => {
-                setAmount('');
-                navigation.goBack();
-              },
-            },
-          ]
-        );
-      }
-    } catch (error) {
-      const msg = error.response?.data?.message || 'Verification failed. Please try again.';
-      dispatch(verifyFundingFail(msg));
-      Alert.alert('Verification Failed', msg);
-    } finally {
-      setVerifying(false);
-    }
-  };
+  // const verifyFunding = async (transactionRef) => {
+  //   setVerifying(true);
+  //   try {
+  //     const response = await apiClient.post(API_ROUTES.WALLET.VERIFY, {
+  //       reference: transactionRef,
+  //     });
+  //
+  //     if (response.data.status === 'success') {
+  //       const newBalance = response.data.data.newBalance;
+  //
+  //       dispatch(verifyFundingSuccess({ newBalance }));
+  //       dispatch(fetchBalanceSuccess({ balance: newBalance, currency: 'NGN' }));
+  //
+  //       await AsyncStorage.removeItem('pendingTransactionRef');
+  //
+  //       Alert.alert(
+  //         'Success!',
+  //         `₦${amount} has been successfully added to your wallet.`,
+  //         [
+  //           {
+  //             text: 'OK',
+  //             onPress: () => {
+  //               setAmount('');
+  //               navigation.goBack();
+  //             },
+  //           },
+  //         ]
+  //       );
+  //     }
+  //   } catch (error) {
+  //     const msg = error.response?.data?.message || 'Verification failed. Please try again.';
+  //     dispatch(verifyFundingFail(msg));
+  //     Alert.alert('Verification Failed', msg);
+  //   } finally {
+  //     setVerifying(false);
+  //   }
+  // };
 
   // ---------------------------------------------------------------------------
   // Manual Transfer Notify
@@ -377,28 +377,28 @@ const FundWalletScreen = ({ navigation }) => {
     }
   };
 
-  // Check for pending transaction on load
-  useEffect(() => {
-    const checkPendingTransaction = async () => {
-      const pendingRef = await AsyncStorage.getItem('pendingTransactionRef');
-      if (pendingRef) {
-        Alert.alert(
-          'Pending Transaction',
-          'We found a pending payment. Would you like to verify it?',
-          [
-            { text: 'Verify', onPress: () => verifyFunding(pendingRef) },
-            {
-              text: 'Cancel',
-              onPress: async () => {
-                await AsyncStorage.removeItem('pendingTransactionRef');
-              },
-            },
-          ]
-        );
-      }
-    };
-    checkPendingTransaction();
-  }, []);
+  // Check for pending transaction on load (Paystack — COMMENTED OUT)
+  // useEffect(() => {
+  //   const checkPendingTransaction = async () => {
+  //     const pendingRef = await AsyncStorage.getItem('pendingTransactionRef');
+  //     if (pendingRef) {
+  //       Alert.alert(
+  //         'Pending Transaction',
+  //         'We found a pending payment. Would you like to verify it?',
+  //         [
+  //           { text: 'Verify', onPress: () => verifyFunding(pendingRef) },
+  //           {
+  //             text: 'Cancel',
+  //             onPress: async () => {
+  //               await AsyncStorage.removeItem('pendingTransactionRef');
+  //             },
+  //           },
+  //         ]
+  //       );
+  //     }
+  //   };
+  //   checkPendingTransaction();
+  // }, []);
 
   // ---------------------------------------------------------------------------
   // Render
@@ -497,10 +497,10 @@ const FundWalletScreen = ({ navigation }) => {
                 </View>
               </View>
 
-              {/* Payment method selection */}
+              {/* Payment method selection (Paystack — COMMENTED OUT) */}
               <View style={styles.card}>
                 <Text style={styles.label}>Choose payment method</Text>
-                <TouchableOpacity
+                {/* <TouchableOpacity
                   style={styles.paymentMethodRow}
                   onPress={handleInitiateFunding}
                   disabled={isLoading || !amount}
@@ -515,7 +515,7 @@ const FundWalletScreen = ({ navigation }) => {
                   <Ionicons name="chevron-forward" size={20} color={COLORS.textSecondary} />
                 </TouchableOpacity>
 
-                <View style={styles.divider} />
+                <View style={styles.divider} /> */}
 
                 <TouchableOpacity
                   style={styles.paymentMethodRow}
@@ -536,11 +536,11 @@ const FundWalletScreen = ({ navigation }) => {
               <View style={styles.infoContainer}>
                 <Ionicons name="shield-checkmark-outline" size={20} color={COLORS.success} />
                 <Text style={styles.infoText}>
-                  Payments are secured by Paystack and Monnify. You will be redirected to complete the transaction.
+                  Payments are secured by Monnify. You will be redirected to complete the transaction.
                 </Text>
               </View>
 
-              {fundingState.status === 'pending' && fundingState.transactionRef && (
+              {/* {fundingState.status === 'pending' && fundingState.transactionRef && (
                 <View style={styles.pendingContainer}>
                   <Text style={styles.pendingText}>
                     Verifying transaction: {fundingState.transactionRef.substring(0, 8)}...
@@ -551,7 +551,7 @@ const FundWalletScreen = ({ navigation }) => {
                     </Text>
                   </TouchableOpacity>
                 </View>
-              )}
+              )} */}
             </View>
 
             <View style={styles.footer}>
@@ -563,7 +563,7 @@ const FundWalletScreen = ({ navigation }) => {
               ) : (
                 <CustomButton
                   label={isLoading ? 'Processing...' : `Pay ₦${amount || '0.00'}`}
-                  onPress={handleInitiateFunding}
+                  onPress={handleInitiateMonnifyFunding}
                   isLoading={isLoading}
                   variant="primary"
                   disabled={!amount || isLoading}
