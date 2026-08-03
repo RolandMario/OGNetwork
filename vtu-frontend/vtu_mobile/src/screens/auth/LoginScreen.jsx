@@ -79,6 +79,16 @@ if (response.data.status === 'success') {
         errorMessage = error.response.data.message;
       }
 
+      // Handle timeout / cold-start gracefully — the serverless backend may
+      // take 20-40s on the first request after idle. Give the user a clear
+      // message and a retry option instead of a cryptic timeout error.
+      if (error.code === 'ECONNABORTED' || /timeout/i.test(error.message || '')) {
+        errorMessage =
+          'The server is taking longer than expected to respond. ' +
+          'This can happen on the first request after idle (serverless cold start). ' +
+          'Please try again.';
+      }
+
       dispatch(loginFail(errorMessage));
       console.log('Login Failed', errorMessage);
     } finally {

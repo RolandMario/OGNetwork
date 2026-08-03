@@ -218,27 +218,59 @@ app.use((err, _req, res, _next) => {
 // The lazy-connection fallback in getTenantConnection() will retry the
 // Master DB connection on the first incoming request. This is critical
 // because Vercel cold-starts may have transient network issues.
+//
+// CRITICAL for Vercel: The Express app MUST be exported immediately.
+// The @vercel/node adapter uses the exported handler for every request.
+// If we block module export on DB connections (which can take 5-35s on
+// cold start), Vercel's function timeout (10s on Hobby) kills the request
+// before the handler is even available. Instead, we export the app right
+// away and run the boot sequence in the background. The lazy-connection
+// fallback in getTenantConnection() will establish DB connections on the
+// first incoming request.
 // ---------------------------------------------------------------------------
-(async () => {
-  try {
-    console.log('[BOOT] Loading tenant secrets…');
-    await loadTenantSecrets();
+if (NODE_ENV !== 'production') {
+  // Local development: start the HTTP server normally.
+  (async () => {
+    try {
+      console.log('[BOOT] Loading tenant secrets…');
+      await loadTenantSecrets();
 
-    console.log('[BOOT] Connecting tenant databases…');
-    await connectAllTenantDbs();
+      console.log('[BOOT] Connecting tenant databases…');
+      await connectAllTenantDbs();
 
-    console.log('[BOOT] All tenant DB connections established.');
-  } catch (err) {
-    console.error('[BOOT] Startup warning (non-fatal):', err.message);
-    console.error('[BOOT] The server will still start. Lazy fallback will retry connections on first request.');
-  }
+      console.log('[BOOT] All tenant DB connections established.');
+    } catch (err) {
+      console.error('[BOOT] Startup warning (non-fatal):', err.message);
+      console.error('[BOOT] The server will still start. Lazy fallback will retry connections on first request.');
+    }
 
-  // Always start the server, even if DB connections failed
-  app.listen(PORT, () => {
-    console.log(
-      `[BOOT] OGNetwork backend running on port ${PORT} [${NODE_ENV}]`
-    );
+    // Always start the server, even if DB connections failed
+    app.listen(PORT, () => {
+      console.log(
+        `[BOOT] OGNetwork backend running on port ${PORT} [${NODE_ENV}]`
+      );
+    });
+  })();
+} else {
+  // Production (Vercel): export the app immediately.
+  // Kick off the boot sequence in the background — it will warm the
+  // connection pool for subsequent requests. The first request may
+  // still hit the lazy fallback, but it won't be blocked by module load.
+  console.log('[BOOT] Production mode — exporting app immediately (non-blocking boot).');
+  setImmediate(async () => {
+    try {
+      console.log('[BOOT] Loading tenant secrets…');
+      await loadTenantSecrets();
+
+      console.log('[BOOT] Connecting tenant databases…');
+      await connectAllTenantDbs();
+
+      console.log('[BOOT] All tenant DB connections established.');
+    } catch (err) {
+      console.error('[BOOT] Startup warning (non-fatal):', err.message);
+      console.error('[BOOT] Lazy fallback will retry connections on first request.');
+    }
   });
-})();
+}
 
 module.exports = app; // exported for potential testing use

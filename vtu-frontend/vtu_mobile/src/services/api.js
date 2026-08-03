@@ -4,7 +4,9 @@ import { API_ROOT } from '../constants/apiConfig';
 
 export const apiClient = axios.create({
   baseURL: API_ROOT,
-  timeout: 15000,
+  // Generous timeout to handle Vercel serverless cold starts.
+  // First request after idle can take 20-40s (Node boot + MongoDB connection).
+  timeout: 60000,
   headers: {
     'Content-Type': 'application/json',
     'x-tenant-id': 'demo',
