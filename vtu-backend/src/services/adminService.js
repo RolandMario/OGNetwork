@@ -47,7 +47,8 @@ async function syncDataPlans(ServicePlan, { providerName, AdminConfig } = {}) {
     provider = await providerRegistry.getProvider('data', AdminConfig);
   }
 
-  console.log(`[adminService] Syncing DATA plans from provider: ${provider.name || 'unknown'}...`);
+  const providerLabel = provider.name || providerName || 'unknown';
+  console.log(`[adminService] Syncing DATA plans from provider: ${providerLabel}...`);
   const dataNetworks = await provider.getDataNetworks();
   const dataNetworkList = dataNetworks?.networks || [];
 
@@ -78,7 +79,7 @@ async function syncDataPlans(ServicePlan, { providerName, AdminConfig } = {}) {
             providerPrice: providerPrice,
             ourPrice:      providerPrice,
             prices:        initLevelPrices(providerPrice),
-            metadata:      { label: plan.label, description: plan.description },
+            metadata:      { label: plan.label, description: plan.description, syncedFromProvider: providerLabel },
             lastSyncedAt:  new Date(),
             _providerData: plan,
           });
@@ -117,7 +118,8 @@ async function syncCablePlans(ServicePlan, { providerName, AdminConfig } = {}) {
     provider = await providerRegistry.getProvider('cable', AdminConfig);
   }
 
-  console.log(`[adminService] Syncing CABLE plans from provider: ${provider.name || 'unknown'}...`);
+  const providerLabel = provider.name || providerName || 'unknown';
+  console.log(`[adminService] Syncing CABLE plans from provider: ${providerLabel}...`);
   const cableProviders = await provider.getCableProviders();
   const cableProviderList = cableProviders?.providers || [];
 
@@ -146,7 +148,7 @@ async function syncCablePlans(ServicePlan, { providerName, AdminConfig } = {}) {
             providerPrice: providerPrice,
             ourPrice:      providerPrice,
             prices:        initLevelPrices(providerPrice),
-            metadata:      { display: plan.display, description: plan.description },
+            metadata:      { display: plan.display, description: plan.description, syncedFromProvider: providerLabel },
             lastSyncedAt:  new Date(),
             _providerData: plan,
           });
@@ -184,15 +186,19 @@ async function syncElectricityPlans(ServicePlan, { providerName, AdminConfig } =
     provider = await providerRegistry.getProvider('electricity', AdminConfig);
   }
 
-  console.log(`[adminService] Syncing ELECTRICITY plans from provider: ${provider.name || 'unknown'}...`);
+  const providerLabel = provider.name || providerName || 'unknown';
+  console.log(`[adminService] Syncing ELECTRICITY plans from provider: ${providerLabel}...`);
   try {
     const electricityResponse = await provider.getElectricityPlans();
     const electricityPlans = electricityResponse?.plans || [];
 
     for (const plan of electricityPlans) {
+      // Use the disco identifier as the provider field (e.g., 'ikeja-electric')
+      const discoIdentifier = plan.provider || plan.identifier || plan.plan_code || 'electricity';
+
       const existing = await ServicePlan.findOne({
         service:  'electricity',
-        provider: 'electricity',
+        provider: discoIdentifier,
         planCode: plan.plan_code,
       });
 
@@ -202,7 +208,7 @@ async function syncElectricityPlans(ServicePlan, { providerName, AdminConfig } =
         const providerPrice = Number(plan.min_amount);
         await ServicePlan.create({
           service:       'electricity',
-          provider:      'electricity',
+          provider:      discoIdentifier,
           planCode:      plan.plan_code,
           planName:      plan.plan_name,
           description:   plan.plan_name,
@@ -214,6 +220,7 @@ async function syncElectricityPlans(ServicePlan, { providerName, AdminConfig } =
             min_amount: plan.min_amount,
             max_amount: plan.max_amount,
             type:       'prepaid',
+            syncedFromProvider: providerLabel,
           },
           lastSyncedAt: new Date(),
           _providerData: plan,

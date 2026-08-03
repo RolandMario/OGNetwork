@@ -148,13 +148,18 @@ export default function PlansPage() {
   // The single backend sync endpoint (/admin/sync-plans) always syncs
   // everything (data + cable + electricity) in one call, so no per-service
   // endpoint is needed here.
-  const syncPlans = async () => {
+  const syncPlans = async (service?: string) => {
     setSyncing(true);
     try {
       const token = localStorage.getItem("adminToken");
       const tenantId = localStorage.getItem("tenantId") || "demo";
 
-      const res = await fetch(`${API_BASE}/admin/plans/sync-plans`, {
+      // If a specific service is provided, use the per-service endpoint
+      const endpoint = service
+        ? `/admin/plans/sync/${service}`
+        : "/admin/plans/sync-plans";
+
+      const res = await fetch(`${API_BASE}${endpoint}`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -165,13 +170,13 @@ export default function PlansPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Sync failed");
 
-      // FIX: backend now returns { created, updated, errors } instead of { synced, skipped, errors }
+      // Backend returns { synced, skipped, errors }
       const syncData = data.data || {};
-      const created = syncData.created || 0;
-      const updated = syncData.updated || 0;
+      const synced = syncData.synced || 0;
+      const skipped = syncData.skipped || 0;
       const errors = syncData.errors || [];
 
-      let msg = `${created} new plans created, ${updated} existing plans updated with latest provider prices.`;
+      let msg = `${synced} new plans created, ${skipped} existing plans skipped.`;
       if (errors.length > 0) {
         msg += `\n\nErrors (${errors.length}):\n${errors.slice(0, 5).join('\n')}`;
         if (errors.length > 5) msg += `\n...and ${errors.length - 5} more`;
@@ -209,13 +214,34 @@ export default function PlansPage() {
           <h1 className="text-2xl font-bold text-slate-900">Service Plans</h1>
           <p className="text-sm text-slate-500 mt-1">{plans.length} total plans</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap justify-end">
           <button
             onClick={() => syncPlans()}
             disabled={syncing}
             className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {syncing ? "Syncing..." : "Sync from Provider"}
+            {syncing ? "Syncing..." : "Sync All"}
+          </button>
+          <button
+            onClick={() => syncPlans("data")}
+            disabled={syncing}
+            className="px-3 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Sync Data
+          </button>
+          <button
+            onClick={() => syncPlans("cable")}
+            disabled={syncing}
+            className="px-3 py-2 bg-orange-600 text-white rounded-lg text-sm font-medium hover:bg-orange-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Sync Cable
+          </button>
+          <button
+            onClick={() => syncPlans("electricity")}
+            disabled={syncing}
+            className="px-3 py-2 bg-yellow-600 text-white rounded-lg text-sm font-medium hover:bg-yellow-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Sync Electricity
           </button>
           <button
             onClick={() => fetchPlans()}

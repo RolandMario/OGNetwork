@@ -1,10 +1,7 @@
 import React, { createContext, useState, useContext, useCallback } from 'react';
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Platform } from 'react-native';
-// import { token } from 'morgan';
-
-const API_URL = Platform.OS === 'android' ? 'https://vtu-project.vercel.app' : 'https://vtu-project.vercel.app';
+import { API_BASE_URL } from '../constants/apiConfig';
 
 // 1. Define the Context
 export const UserContext = createContext(null);
@@ -49,7 +46,7 @@ export const UserProvider = ({ children }) => {
 
     try {
       const response = await axios.get(
-        `${API_URL}/api/v1/user/dashboard/data`,
+        `${API_BASE_URL}/api/v1/user/dashboard/data`,
         {
           headers: {
             'x-tenant-id': tenantId,

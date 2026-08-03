@@ -233,10 +233,103 @@ async function subscribeCable({ identifier, plan, iuc, phone, amount }) {
 // Electricity
 // ---------------------------------------------------------------------------
 
+// Map from Gladtidings electricity disco names to our internal lowercase identifiers
+const ELECTRICITY_NAME_TO_ID = {
+  'ikeja electric': 'ikeja-electric',
+  'ikeja': 'ikeja-electric',
+  'eko electric': 'eko-electric',
+  'eko': 'eko-electric',
+  'abuja electric': 'abuja-electric',
+  'abuja': 'abuja-electric',
+  'enugu electric': 'enugu-electric',
+  'enugu': 'enugu-electric',
+  'port harcourt electric': 'port-harcourt-electric',
+  'port harcourt': 'port-harcourt-electric',
+  'kano electric': 'kano-electric',
+  'kano': 'kano-electric',
+  'ibadan electric': 'ibadan-electric',
+  'ibadan': 'ibadan-electric',
+  'jos electric': 'jos-electric',
+  'jos': 'jos-electric',
+  'kaduna electric': 'kaduna-electric',
+  'kaduna': 'kaduna-electric',
+  'yola electric': 'yola-electric',
+  'yola': 'yola-electric',
+  'benin electric': 'benin-electric',
+  'benin': 'benin-electric',
+};
+
+/**
+ * Parse electricity plans from Gladtidings /services/ response.
+ * Gladtidings returns electricity data in various shapes depending on the API version.
+ * We defensively search common keys and normalize to { plans: [...] }.
+ */
 async function getElectricityPlans() {
   try {
-    const response = await apiClient.get('/services/');
-    return response.data;
+    const data = await _fetchServices();
+
+    // Gladtidings typically returns electricity under one of these keys
+    const electricityRaw =
+      data?.electricity ||
+      data?.Electricity ||
+      data?.electricity_plans ||
+      data?.Electricityplan ||
+      data?.disco ||
+      data?.Disco ||
+      [];
+
+    // Normalize to an array
+    const electricityList = Array.isArray(electricityRaw)
+      ? electricityRaw
+      : (electricityRaw?.plans || electricityRaw?.list || electricityRaw?.data || []);
+
+    const plans = [];
+    const seen = new Set();
+
+    for (const item of electricityList) {
+      // Extract disco name — try multiple field names
+      const rawName =
+        item?.disco_name ||
+        item?.disconame ||
+        item?.name ||
+        item?.disco ||
+        item?.provider_name ||
+        item?.plan_name ||
+        '';
+
+      const name = String(rawName).trim();
+      if (!name) continue;
+
+      // Map to internal identifier
+      const normalized = name.toLowerCase();
+      const identifier = ELECTRICITY_NAME_TO_ID[normalized] || normalized.replace(/\s+/g, '-');
+
+      // Deduplicate by identifier
+      if (seen.has(identifier)) continue;
+      seen.add(identifier);
+
+      // Extract plan code — disco_id or plan_id
+      const planCode =
+        item?.disco_id ||
+        item?.plan_id ||
+        item?.id ||
+        item?.code ||
+        identifier;
+
+      // Extract min/max amounts
+      const minAmount = Number(item?.min_amount ?? item?.minimum_amount ?? item?.min ?? 100);
+      const maxAmount = Number(item?.max_amount ?? item?.maximum_amount ?? item?.max ?? 1000000);
+
+      plans.push({
+        plan_code: String(planCode),
+        plan_name: name,
+        min_amount: minAmount,
+        max_amount: maxAmount,
+        _raw: item,
+      });
+    }
+
+    return { plans };
   } catch (error) {
     throw new Error(`[gladtidings] getElectricityPlans: ${extractErrorMessage(error)}`);
   }

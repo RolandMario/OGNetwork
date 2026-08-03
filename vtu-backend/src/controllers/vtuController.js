@@ -121,10 +121,30 @@ exports.getPlans = async (req, res) => {
     const filter = { isActive: true, service };
     if (provider) filter.provider = provider;
 
-    const plans = await ServicePlan.find(filter)
+    let plans = await ServicePlan.find(filter)
       .select('service provider planCode planName description ourPrice metadata')
       .sort({ provider: 1, ourPrice: 1 })
       .lean();
+
+    // Filter to only the active provider's plans (unless a specific provider was requested)
+    if (!provider) {
+      try {
+        const providerMap = await providerRegistry.getProviderMap(req.models.AdminConfig);
+        const activeProvider = providerMap[service];
+        if (activeProvider) {
+          const activePlans = plans.filter(
+            (p) => p.metadata?.syncedFromProvider === activeProvider
+          );
+          // Fallback: if no plans match the active provider tag (e.g., legacy data),
+          // keep all plans so the screen isn't empty.
+          if (activePlans.length > 0) {
+            plans = activePlans;
+          }
+        }
+      } catch (err) {
+        console.error('[vtuController.getPlans] provider filter error:', err.message);
+      }
+    }
 
     // Group by provider if no specific provider requested
     let responseData;
@@ -236,10 +256,28 @@ exports.getElectricityPlans = async (req, res) => {
 
     if (ServicePlan) {
       // Return from DB (with ourPrice)
-      const plans = await ServicePlan.find({ service: 'electricity', isActive: true })
+      let plans = await ServicePlan.find({ service: 'electricity', isActive: true })
         .select('planCode planName description ourPrice metadata')
         .sort({ planName: 1 })
         .lean();
+
+      // Filter to only the active electricity provider's plans
+      try {
+        const providerMap = await providerRegistry.getProviderMap(req.models.AdminConfig);
+        const activeProvider = providerMap.electricity;
+        if (activeProvider) {
+          const activePlans = plans.filter(
+            (p) => p.metadata?.syncedFromProvider === activeProvider
+          );
+          // Fallback: if no plans match the active provider tag (e.g., legacy data),
+          // keep all plans so the screen isn't empty.
+          if (activePlans.length > 0) {
+            plans = activePlans;
+          }
+        }
+      } catch (err) {
+        console.error('[vtuController.getElectricityPlans] provider filter error:', err.message);
+      }
 
       if (plans.length) {
         return res.status(200).json({ status: 'success', data: { plans } });
@@ -570,9 +608,11 @@ exports.buyElectricity = async (req, res) => {
 
   try {
     // 1. Look up plan from DB — validate amount range
+    // The planCode sent from the mobile app IS the disco identifier (e.g., 'ikeja-electric'),
+    // which is stored as the `provider` field for electricity plans.
     const dbPlan = await lookupPlan(ServicePlan, {
       service:  'electricity',
-      provider: 'electricity',
+      provider: plan,
       planCode: plan,
     });
 
