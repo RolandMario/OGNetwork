@@ -74,14 +74,28 @@ function extractErrorMessage(error, fallback = 'Service temporarily unavailable'
   if (error.response) {
     const data = error.response.data;
     // Try common error response shapes
-    return (
+    const direct =
       data?.message ||
       data?.detail ||
       data?.error ||
       data?.msg ||
-      (typeof data === 'string' ? data : null) ||
-      fallback
-    );
+      data?.api_response ||
+      data?.Status ||
+      data?.status ||
+      (typeof data === 'string' ? data : null);
+    if (direct) return direct;
+
+    // Django REST Framework error format: { field: ["error message"] }
+    if (data && typeof data === 'object') {
+      const firstKey = Object.keys(data)[0];
+      const firstVal = data[firstKey];
+      if (Array.isArray(firstVal) && firstVal.length > 0) {
+        return `${firstKey}: ${firstVal[0]}`;
+      }
+      if (typeof firstVal === 'string') return firstVal;
+    }
+
+    return fallback;
   }
   if (error.code === 'ECONNABORTED') return 'Request timed out. Please try again.';
   if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED') {
@@ -90,10 +104,29 @@ function extractErrorMessage(error, fallback = 'Service temporarily unavailable'
   return error.message || fallback;
 }
 
+/**
+ * Check if a provider response indicates success.
+ * Handles both lowercase `status` and capital `Status` fields,
+ * and values like 'success', 'successful', 'SUCCESS', 'SUCCESSFUL', true.
+ * @param {Object} data - The provider response data
+ * @returns {boolean}
+ */
+function isSuccessResponse(data) {
+  if (!data || typeof data !== 'object') return false;
+  const status = data.status ?? data.Status;
+  if (status === true) return true;
+  if (typeof status === 'string') {
+    const normalized = status.toLowerCase();
+    return normalized === 'success' || normalized === 'successful';
+  }
+  return false;
+}
+
 module.exports = {
   createApiClient,
   getNetworkCode,
   successResponse,
   extractErrorMessage,
+  isSuccessResponse,
   DEFAULT_NETWORK_MAP,
 };

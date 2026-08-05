@@ -7,7 +7,7 @@
 // Base URL: https://www.gladtidingsdata.com/api
 
 const axios = require('axios');
-const { createApiClient, getNetworkCode, successResponse, extractErrorMessage } = require('./baseProvider');
+const { createApiClient, getNetworkCode, successResponse, extractErrorMessage, isSuccessResponse } = require('./baseProvider');
 
 const API_KEY = process.env.GLADTIDINGS_API_KEY;
 const BASE_URL = process.env.GLADTIDINGS_BASE_URL;
@@ -18,11 +18,13 @@ if (!API_KEY) {
 
 const apiClient = createApiClient(BASE_URL, API_KEY, 'Token');
 
+// Gladtidings expects numeric network IDs (primary keys), not string names.
+// MTN=1, GLO=2, AIRTEL=3, 9MOBILE=6
 const NETWORK_MAP = {
-  mtn: 'mtn',
-  airtel: 'airtel',
-  glo: 'glo',
-  '9mobile': '9mobile',
+  mtn: 1,
+  airtel: 3,
+  glo: 2,
+  '9mobile': 6,
 };
 
 // ---------------------------------------------------------------------------
@@ -60,18 +62,19 @@ async function purchaseAirtime({ network, amount, mobile_number }) {
       network: getNetworkCode(network, NETWORK_MAP),
       amount: Number(amount),
       mobile_number,
+      Ported_number: true,
     });
 
     const data = response.data;
 
-    if (data.status === 'success' || data.status === true || data.status === 'SUCCESS') {
+    if (isSuccessResponse(data)) {
       return successResponse({
         providerTxId: data.transaction_id || data.id || data.reference || '',
         message: data.message || 'Airtime sent successfully',
       });
     }
 
-    throw new Error(data.message || data.response || 'Airtime purchase failed');
+    throw new Error(data.api_response || data.message || data.response || 'Airtime purchase failed');
   } catch (error) {
     throw new Error(`[gladtidings] purchaseAirtime: ${extractErrorMessage(error, 'Airtime purchase failed')}`);
   }
@@ -154,18 +157,19 @@ async function purchaseData({ network, plan_code, mobile_number }) {
       network: getNetworkCode(network, NETWORK_MAP),
       plan: plan_code,
       mobile_number,
+      Ported_number: true,
     });
 
     const data = response.data;
 
-    if (data.status === 'success' || data.status === true || data.status === 'SUCCESS') {
+    if (isSuccessResponse(data)) {
       return successResponse({
         providerTxId: data.transaction_id || data.id || data.reference || '',
         message: data.message || 'Data purchased successfully',
       });
     }
 
-    throw new Error(data.message || data.response || 'Data purchase failed');
+    throw new Error(data.api_response || data.message || data.response || 'Data purchase failed');
   } catch (error) {
     throw new Error(`[gladtidings] purchaseData: ${extractErrorMessage(error, 'Data purchase failed')}`);
   }
@@ -228,14 +232,14 @@ async function subscribeCable({ identifier, plan, iuc, phone, amount }) {
 
     const data = response.data;
 
-    if (data.status === 'success' || data.status === true || data.status === 'SUCCESS') {
+    if (isSuccessResponse(data)) {
       return successResponse({
         providerTxId: data.transaction_id || data.id || data.reference || '',
         message: data.message || 'Cable subscription successful',
       });
     }
 
-    throw new Error(data.message || data.response || 'Cable subscription failed');
+    throw new Error(data.api_response || data.message || data.response || 'Cable subscription failed');
   } catch (error) {
     throw new Error(`[gladtidings] subscribeCable: ${extractErrorMessage(error, 'Cable subscription failed')}`);
   }
@@ -383,14 +387,14 @@ async function purchaseElectricity({ meter, plan, amount, phone, type = 'prepaid
 
     const data = response.data;
 
-    if (data.status === 'success' || data.status === true || data.status === 'SUCCESS') {
+    if (isSuccessResponse(data)) {
       return successResponse({
         providerTxId: data.transaction_id || data.id || data.reference || data.token || '',
         message: data.message || 'Electricity purchase successful',
       });
     }
 
-    throw new Error(data.message || data.response || 'Electricity purchase failed');
+    throw new Error(data.api_response || data.message || data.response || 'Electricity purchase failed');
   } catch (error) {
     throw new Error(`[gladtidings] purchaseElectricity: ${extractErrorMessage(error, 'Electricity purchase failed')}`);
   }
