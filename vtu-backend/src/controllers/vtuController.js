@@ -435,10 +435,11 @@ exports.buyData = async (req, res) => {
     });
 
     // 2. Determine user's price based on their level
+    // NOTE: prices default to 0 in the schema, so we must check for a valid
+    //       positive price (> 0) before using it. Otherwise fall back to ourPrice.
     const userLevel = req.user.level || 'normal';
-    const userPrice = (plan.prices && plan.prices[userLevel] !== undefined)
-      ? plan.prices[userLevel]
-      : plan.ourPrice;
+    const levelPrice = plan.prices && plan.prices[userLevel];
+    const userPrice = (levelPrice && levelPrice > 0) ? levelPrice : plan.ourPrice;
 
     txData = await debitWalletAndCreateTx({
       userId,
@@ -523,10 +524,11 @@ exports.subscribeCable = async (req, res) => {
     });
 
     // 2. Determine user's price based on their level
+    // NOTE: prices default to 0 in the schema, so we must check for a valid
+    //       positive price (> 0) before using it. Otherwise fall back to ourPrice.
     const userLevel = req.user.level || 'normal';
-    const userPrice = (dbPlan.prices && dbPlan.prices[userLevel] !== undefined)
-      ? dbPlan.prices[userLevel]
-      : dbPlan.ourPrice;
+    const levelPrice = dbPlan.prices && dbPlan.prices[userLevel];
+    const userPrice = (levelPrice && levelPrice > 0) ? levelPrice : dbPlan.ourPrice;
 
     txData = await debitWalletAndCreateTx({
       userId,
