@@ -355,6 +355,16 @@ async function getElectricityPlansRaw() {
   return getElectricityPlans();
 }
 
+// Convert a plan code (which may be a string pk from the DB) to a numeric pk.
+// The provider API expects a numeric primary key for disco_name/disco_id.
+function toNumericPk(value) {
+  const num = Number(value);
+  if (Number.isNaN(num)) {
+    throw new Error(`[gladtidings] Invalid disco pk value: ${value}`);
+  }
+  return num;
+}
+
 async function verifyMeter({ meter, plan, type = 'prepaid' }) {
   if (!meter || !plan) {
     throw new Error('[gladtidings] verifyMeter: meter and plan are required.');
@@ -363,7 +373,7 @@ async function verifyMeter({ meter, plan, type = 'prepaid' }) {
   try {
     const meterTypeId = type === 'prepaid' ? 1 : 2;
     const response = await apiClient.get('/v2/validatemeter/', {
-      params: { disco_id: plan, meter_type: meterTypeId, meter_number: meter },
+      params: { disco_id: toNumericPk(plan), meter_type: meterTypeId, meter_number: meter },
     });
     const data = response.data;
 
@@ -397,7 +407,7 @@ async function purchaseElectricity({ meter, plan, amount, phone, type = 'prepaid
   try {
     const meterTypeId = type === 'prepaid' ? 1 : 2;
     const response = await apiClient.post('/billpayment/', {
-      disco_name: plan,
+      disco_name: toNumericPk(plan),
       amount: Number(amount),
       meter_number: meter,
       MeterType: meterTypeId,
