@@ -421,8 +421,26 @@ async function verifyMeter({ meter, plan, type = 'prepaid' }) {
     const response = await apiClient.get('/validatemeter/', {
       params: { disco_id: plan, meter_number: meter, meter_type: type },
     });
-    return response.data;
+    const data = response.data;
+
+    // DataStation returns { invalid: true, name: "INVALID METER NUMBER" } for invalid meters
+    if (data && data.invalid === true) {
+      const err = new Error(data.name || 'Invalid meter number.');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    // Normalize response to a consistent shape for our frontend
+    return {
+      status: 'success',
+      customer_name: data.name || data.customer_name || 'Unknown',
+      address: data.address || '',
+      meter_number: meter,
+      message: data.message || 'Meter verification successful',
+      _raw: data,
+    };
   } catch (error) {
+    if (error.statusCode) throw error;
     throw new Error(`[datastation] verifyMeter: ${extractErrorMessage(error, 'Meter verification failed')}`);
   }
 }

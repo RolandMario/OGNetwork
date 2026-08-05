@@ -307,8 +307,44 @@ exports.verifyMeter = async (req, res) => {
       return res.status(400).json({ status: 'fail', message: 'meter and plan are required.' });
     }
 
+    // Try the configured provider first
     const provider = await providerRegistry.getProvider('electricity', req.models.AdminConfig);
     const data = await provider.verifyMeter({ meter, plan, type });
+
+    // If the primary provider returns "Unknown" as the customer name,
+    // try other providers as a fallback to get the actual customer name.
+    const customerName = data.customer_name || data.name || '';
+    if (!customerName || customerName.toLowerCase() === 'unknown') {
+      const { PROVIDERS } = providerRegistry;
+      const configuredName = provider.name;
+
+      for (const [name, fallbackProvider] of Object.entries(PROVIDERS)) {
+        if (name === configuredName) continue; // skip the primary provider
+        if (typeof fallbackProvider.verifyMeter !== 'function') continue;
+
+        try {
+          const fallbackData = await fallbackProvider.verifyMeter({ meter, plan, type });
+          const fallbackName = fallbackData.customer_name || fallbackData.name || '';
+          if (fallbackName && fallbackName.toLowerCase() !== 'unknown') {
+            // Found a provider that returned the actual customer name
+            return res.status(200).json({
+              status: 'success',
+              data: {
+                ...fallbackData,
+                customer_name: fallbackName,
+                address: fallbackData.address || data.address || '',
+                meter_number: meter,
+                message: fallbackData.message || 'Meter verification successful',
+              },
+            });
+          }
+        } catch (fallbackErr) {
+          console.warn(`[vtuController] Fallback provider "${name}" failed for meter verify:`, fallbackErr.message);
+        }
+      }
+    }
+
+    // Return the primary provider's response (even if customer name is "Unknown")
     res.status(200).json({ status: 'success', data });
   } catch (error) {
     res.status(error.statusCode || 500).json({ status: 'error', message: error.message });

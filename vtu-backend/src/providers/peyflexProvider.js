@@ -198,7 +198,18 @@ async function verifyMeter({ meter, plan, type = 'prepaid' }) {
     throw err;
   }
 
-  return response;
+  // Normalize response to a consistent shape for our frontend.
+  // Peyflex may return customer_name as "Unknown" when the upstream
+  // DISCO cannot resolve the name — we pass it through but the
+  // controller will handle the fallback.
+  return {
+    status: 'success',
+    customer_name: response.customer_name || 'Unknown',
+    address: response.address || '',
+    meter_number: meter,
+    message: response.message || 'Meter verification successful',
+    _raw: response,
+  };
 }
 
 async function purchaseElectricity({ meter, plan, amount, phone, type = 'prepaid' }) {

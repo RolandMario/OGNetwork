@@ -363,10 +363,28 @@ async function verifyMeter({ meter, plan, type = 'prepaid' }) {
   try {
     const meterTypeId = type === 'prepaid' ? 1 : 2;
     const response = await apiClient.get('/v2/validatemeter/', {
-      params: { disco_id: plan, meter_type: type, meter_number: meter },
+      params: { disco_id: plan, meter_type: meterTypeId, meter_number: meter },
     });
-    return response.data;
+    const data = response.data;
+
+    // Gladtidings returns { invalid: true, name: "INVALID METER NUMBER" } for invalid meters
+    if (data && data.invalid === true) {
+      const err = new Error(data.name || 'Invalid meter number.');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    // Normalize response to a consistent shape for our frontend
+    return {
+      status: 'success',
+      customer_name: data.name || data.customer_name || 'Unknown',
+      address: data.address || '',
+      meter_number: meter,
+      message: data.message || 'Meter verification successful',
+      _raw: data,
+    };
   } catch (error) {
+    if (error.statusCode) throw error;
     throw new Error(`[gladtidings] verifyMeter: ${extractErrorMessage(error, 'Meter verification failed')}`);
   }
 }
