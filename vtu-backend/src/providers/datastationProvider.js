@@ -485,12 +485,13 @@ async function purchaseElectricity({ meter, plan, amount, phone, type = 'prepaid
   }
 
   try {
-    const meterTypeId = type === 'prepaid' ? 1 : 2;
+    // DataStation expects the meter type as a descriptive string (e.g. 'prepaid'|'postpaid')
+    // Use meter_type for consistency with verifyMeter which uses 'meter_type'.
     const response = await apiClient.post('/billpayment/', {
       disco_name: await _resolveDiscoId(plan),
       amount: Number(amount),
       meter_number: meter,
-      MeterType: meterTypeId,
+      meter_type: String(type),
     });
 
     const data = response.data;
