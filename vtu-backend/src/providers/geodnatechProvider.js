@@ -486,12 +486,13 @@ async function purchaseElectricity({ meter, plan, amount, phone, type = 'prepaid
   }
 
   try {
-    const meterTypeId = type === 'prepaid' ? 1 : 2;
+    // Geodnatech expects the meter type as a descriptive string (e.g. 'prepaid'|'postpaid')
+    // (verifyMeter uses 'meter_type' for validation). Send meter_type as a string here.
     const response = await apiClient.post('/billpayment/', {
       disco_name: await _resolveDiscoId(plan),
       amount: Number(amount),
       meter_number: meter,
-      MeterType: meterTypeId,
+      meter_type: String(type),
     });
 
     const data = response.data;
