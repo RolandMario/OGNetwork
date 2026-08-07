@@ -395,9 +395,8 @@ async function verifyMeter({ meter, plan, type = 'prepaid' }) {
   }
 
   try {
-    const meterTypeId = type === 'prepaid' ? 1 : 2;
     const response = await apiClient.get('/v2/validatemeter/', {
-      params: { disco_id: await _resolveDiscoId(plan), meter_type: meterTypeId, meter_number: meter },
+      params: { disco_id: await _resolveDiscoId(plan), meter_type: type, meter_number: meter },
     });
     const data = response.data;
 

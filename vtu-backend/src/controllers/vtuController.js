@@ -102,6 +102,27 @@ async function lookupPlan(ServicePlan, { service, provider, planCode }) {
 }
 
 // ---------------------------------------------------------------------------
+// Helper — ordered electricity provider candidates (active provider first)
+// ---------------------------------------------------------------------------
+// The DISCO plans saved in ServicePlan are often synced from a different
+// provider than the one currently active (e.g. peyflex slug plans such as
+// 'ikeja-electric' stored while gladtidings is the configured provider).
+// This returns the configured provider first and then every other provider
+// that can verify/purchase electricity, so meter verification and purchase
+// stay resilient to plan<->provider mismatches.
+async function getElectricityProviderCandidates(AdminConfig) {
+  const primary = await providerRegistry.getProvider('electricity', AdminConfig);
+  const { PROVIDERS } = providerRegistry;
+  const candidates = [primary];
+  for (const [name, provider] of Object.entries(PROVIDERS)) {
+    if (name === primary.name) continue;
+    if (typeof provider.verifyMeter !== 'function' || typeof provider.purchaseElectricity !== 'function') continue;
+    if (!candidates.some((c) => c.name === name)) candidates.push(provider);
+  }
+  return candidates;
+}
+
+// ---------------------------------------------------------------------------
 // GET /api/v1/vtu/plans — User-facing plans from DB (returns ourPrice)
 // ---------------------------------------------------------------------------
 
@@ -312,45 +333,51 @@ exports.verifyMeter = async (req, res) => {
       return res.status(400).json({ status: 'fail', message: 'meter and plan are required.' });
     }
 
-    // Try the configured provider first
-    const provider = await providerRegistry.getProvider('electricity', req.models.AdminConfig);
-    const data = await provider.verifyMeter({ meter, plan, type });
+    // Try every electricity provider (configured primary first). This keeps
+    // meter verification working even when the DISCO plans saved in the DB
+    // were synced from a different provider than the currently active one
+    // (e.g. peyflex slug plans while gladtidings is the configured provider),
+    // which previously surfaced as "Invalid Request Parameters".
+    const candidates = await getElectricityProviderCandidates(req.models.AdminConfig);
 
-    // If the primary provider returns "Unknown" as the customer name,
-    // try other providers as a fallback to get the actual customer name.
-    const customerName = data.customer_name || data.name || '';
-    if (!customerName || customerName.toLowerCase() === 'unknown') {
-      const { PROVIDERS } = providerRegistry;
-      const configuredName = provider.name;
+    let lastError = null;
+    let firstUnknownResult = null; // first non-throwing response (even if name is 'unknown')
 
-      for (const [name, fallbackProvider] of Object.entries(PROVIDERS)) {
-        if (name === configuredName) continue; // skip the primary provider
-        if (typeof fallbackProvider.verifyMeter !== 'function') continue;
+    for (const provider of candidates) {
+      try {
+        const data = await provider.verifyMeter({ meter, plan, type });
+        const customerName = data.customer_name || data.name || '';
 
-        try {
-          const fallbackData = await fallbackProvider.verifyMeter({ meter, plan, type });
-          const fallbackName = fallbackData.customer_name || fallbackData.name || '';
-          if (fallbackName && fallbackName.toLowerCase() !== 'unknown') {
-            // Found a provider that returned the actual customer name
-            return res.status(200).json({
-              status: 'success',
-              data: {
-                ...fallbackData,
-                customer_name: fallbackName,
-                address: fallbackData.address || data.address || '',
-                meter_number: meter,
-                message: fallbackData.message || 'Meter verification successful',
-              },
-            });
-          }
-        } catch (fallbackErr) {
-          console.warn(`[vtuController] Fallback provider "${name}" failed for meter verify:`, fallbackErr.message);
+        // Prefer a provider that actually resolved the customer name.
+        if (customerName && customerName.toLowerCase() !== 'unknown') {
+          return res.status(200).json({
+            status: 'success',
+            data: {
+              ...data,
+              customer_name: customerName,
+              address:       data.address || '',
+              meter_number:  meter,
+              message:       data.message || 'Meter verification successful',
+            },
+          });
         }
+
+        // Remember the first response in case every provider only returns an
+        // 'unknown' customer name.
+        if (!firstUnknownResult) firstUnknownResult = data;
+      } catch (err) {
+        lastError = err;
+        console.warn(`[vtuController] verifyMeter via "${provider.name}" failed: ${err.message}`);
       }
     }
 
-    // Return the primary provider's response (even if customer name is "Unknown")
-    res.status(200).json({ status: 'success', data });
+    // No provider resolved a real name, but at least one returned a response.
+    if (firstUnknownResult) {
+      return res.status(200).json({ status: 'success', data: firstUnknownResult });
+    }
+
+    // Every provider failed — surface the last (primary) error.
+    throw lastError || new Error('Meter verification failed for all providers.');
   } catch (error) {
     res.status(error.statusCode || 500).json({ status: 'error', message: error.message });
   }
@@ -697,15 +724,29 @@ exports.buyElectricity = async (req, res) => {
       Transaction,
     });
 
-    // 4. Call Peyflex at original amount (not marked up)
-    const electricityProvider = await providerRegistry.getProvider('electricity', req.models.AdminConfig);
-    const providerResponse = await electricityProvider.purchaseElectricity({
-      meter,
-      plan,
-      amount: Number(amount), // Provider gets original amount
-      phone,
-      type,
-    });
+    // 4. Purchase electricity — try the configured provider first, then any
+    //    other provider that can handle this plan (mirrors meter verification
+    //    so a plan synced from one provider still works when another is active).
+    const candidates = await getElectricityProviderCandidates(req.models.AdminConfig);
+    let providerResponse = null;
+    let providerError = null;
+    for (const electricityProvider of candidates) {
+      try {
+        providerResponse = await electricityProvider.purchaseElectricity({
+          meter,
+          plan,
+          amount: Number(amount), // Provider gets original amount
+          phone,
+          type,
+        });
+        break; // success — stop trying further providers
+      } catch (err) {
+        providerError = err;
+        console.warn(`[vtuController] buyElectricity via "${electricityProvider.name}" failed: ${err.message}`);
+      }
+    }
+
+    if (!providerResponse) throw providerError || new Error('Electricity purchase failed for all providers.');
 
     // 5. Calculate profit = surcharge amount in kobo
     const electricityProfitKobo = Math.round((chargeAmount - Number(amount)) * 100);
