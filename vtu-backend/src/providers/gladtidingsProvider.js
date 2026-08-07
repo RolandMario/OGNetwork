@@ -276,28 +276,15 @@ const ELECTRICITY_NAME_TO_ID = {
 };
 
 /**
- * Parse electricity plans from Gladtidings /services/ response.
- * Gladtidings returns electricity data in various shapes depending on the API version.
- * We defensively search common keys and normalize to { plans: [...] }.
+ * Build electricity plans from the provider's /disco/ endpoint.
+ * Each DISCO is returned as { id (numeric disco_id), name } and normalized to
+ * { plans: [...] } with the numeric disco_id as plan_code.
  */
 async function getElectricityPlans() {
   try {
-    const data = await _fetchServices();
-
-    // Gladtidings typically returns electricity under one of these keys
-    const electricityRaw =
-      data?.electricity ||
-      data?.Electricity ||
-      data?.electricity_plans ||
-      data?.Electricityplan ||
-      data?.disco ||
-      data?.Disco ||
-      [];
-
-    // Normalize to an array
-    const electricityList = Array.isArray(electricityRaw)
-      ? electricityRaw
-      : (electricityRaw?.plans || electricityRaw?.list || electricityRaw?.data || []);
+    // Build the DISCO list from the provider's /disco/ endpoint, which returns
+    // each DISCO as { id (numeric disco_id), name }.
+    const electricityList = await _fetchDiscoList();
 
     const plans = [];
     const seen = new Set();
@@ -337,7 +324,8 @@ async function getElectricityPlans() {
       const maxAmount = Number(item?.max_amount ?? item?.maximum_amount ?? item?.max ?? 1000000);
 
       plans.push({
-        plan_code: String(planCode),
+        plan_code: String(planCode), // numeric disco_id required by the provider API
+        provider:  identifier,       // disco slug (e.g. 'ikeja-electric')
         plan_name: name,
         min_amount: minAmount,
         max_amount: maxAmount,
@@ -355,14 +343,50 @@ async function getElectricityPlansRaw() {
   return getElectricityPlans();
 }
 
-// Convert a plan code (which may be a string pk from the DB) to a numeric pk.
-// The provider API expects a numeric primary key for disco_name/disco_id.
-function toNumericPk(value) {
-  const num = Number(value);
-  if (Number.isNaN(num)) {
+// ---------------------------------------------------------------------------
+// Electricity DISCO id resolution
+// ---------------------------------------------------------------------------
+// The provider exposes the DISCO list (numeric disco_id + name) at GET /disco/.
+// The app may send a disco as a numeric id, a slug ('ikeja-electric'), or a
+// name ('Ikeja Electric'). Resolve it to the numeric disco_id required by the
+// provider's /validatemeter/ and /billpayment/ endpoints.
+let _discoCache = null;
+
+async function _fetchDiscoList() {
+  if (_discoCache) return _discoCache;
+  const response = await apiClient.get('/disco/');
+  const list = response?.data?.disko || response?.data?.disco || response?.data?.list || [];
+  _discoCache = Array.isArray(list) ? list : [];
+  return _discoCache;
+}
+
+function _clearDiscoCache() {
+  _discoCache = null;
+}
+
+// Normalize a disco name/slug so 'ikeja-electric', 'Ikeja Electric' and
+// 'ikeja electric' all collapse to the same key.
+function _normalizeDisco(str) {
+  return String(str || '')
+    .toLowerCase()
+    .replace(/electric\s*$/i, '')
+    .replace(/[^a-z0-9]+/g, '');
+}
+
+async function _resolveDiscoId(value) {
+  if (value === undefined || value === null || String(value).trim() === '') {
     throw new Error(`[gladtidings] Invalid disco pk value: ${value}`);
   }
-  return num;
+  // Already numeric (the provider's disco_id)
+  if (String(value).trim() !== '' && !Number.isNaN(Number(value))) {
+    return Number(value);
+  }
+  const needle = _normalizeDisco(value);
+  const discos = await _fetchDiscoList();
+  for (const disco of discos) {
+    if (disco && _normalizeDisco(disco?.name) === needle) return Number(disco?.id);
+  }
+  throw new Error(`[gladtidings] Invalid disco pk value: ${value}`);
 }
 
 async function verifyMeter({ meter, plan, type = 'prepaid' }) {
@@ -373,7 +397,7 @@ async function verifyMeter({ meter, plan, type = 'prepaid' }) {
   try {
     const meterTypeId = type === 'prepaid' ? 1 : 2;
     const response = await apiClient.get('/v2/validatemeter/', {
-      params: { disco_id: toNumericPk(plan), meter_type: meterTypeId, meter_number: meter },
+      params: { disco_id: await _resolveDiscoId(plan), meter_type: meterTypeId, meter_number: meter },
     });
     const data = response.data;
 
@@ -407,7 +431,7 @@ async function purchaseElectricity({ meter, plan, amount, phone, type = 'prepaid
   try {
     const meterTypeId = type === 'prepaid' ? 1 : 2;
     const response = await apiClient.post('/billpayment/', {
-      disco_name: toNumericPk(plan),
+      disco_name: await _resolveDiscoId(plan),
       amount: Number(amount),
       meter_number: meter,
       MeterType: meterTypeId,

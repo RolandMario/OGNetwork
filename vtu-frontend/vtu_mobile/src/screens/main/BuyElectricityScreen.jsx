@@ -44,7 +44,18 @@ const BuyElectricityScreen = ({ navigation }) => {
       setLoadingDiscos(true);
       try {
         const response = await apiClient.get(API_ROUTES.VTU.ELECTRICITY_PLANS);
-        const plans = response.data?.data?.plans || [];
+        const rawPlans = response.data?.data?.plans || [];
+
+        // Deduplicate by planCode so the same disco synced from several providers
+        // (or legacy slug plans) can't create duplicate React keys in the FlatList.
+        const seen = new Set();
+        const plans = rawPlans.filter((p) => {
+          const key = String(p?.planCode ?? '');
+          if (!key || seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+
         setDiscos(plans);
         if (plans.length) setSelectedDisco(plans[0]);
       } catch (err) {
@@ -334,7 +345,7 @@ const BuyElectricityScreen = ({ navigation }) => {
             <Text style={styles.modalTitle}>Select Distribution Company</Text>
             <FlatList
               data={discos}
-              keyExtractor={(item) => item.planCode}
+              keyExtractor={(item, index) => String(item?._id || item?.planCode || index)}
               renderItem={({ item }) => (
                 <TouchableOpacity
                   style={styles.discoItem}

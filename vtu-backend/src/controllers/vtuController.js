@@ -84,7 +84,12 @@ async function lookupPlan(ServicePlan, { service, provider, planCode }) {
     );
   }
 
-  const plan = await ServicePlan.findOne({ service, provider, planCode, isActive: true });
+  const plan = await ServicePlan.findOne({
+    service,
+    provider,   // may be undefined for electricity (lookup by planCode only)
+    planCode,
+    isActive: true,
+  });
 
   if (!plan) {
     throw Object.assign(
@@ -257,7 +262,7 @@ exports.getElectricityPlans = async (req, res) => {
     if (ServicePlan) {
       // Return from DB (with ourPrice)
       let plans = await ServicePlan.find({ service: 'electricity', isActive: true })
-        .select('planCode planName description ourPrice metadata')
+        .select('_id planCode planName description ourPrice metadata')
         .sort({ planName: 1 })
         .lean();
 
@@ -646,11 +651,12 @@ exports.buyElectricity = async (req, res) => {
 
   try {
     // 1. Look up plan from DB — validate amount range
-    // The planCode sent from the mobile app IS the disco identifier (e.g., 'ikeja-electric'),
-    // which is stored as the `provider` field for electricity plans.
+    // The planCode sent from the mobile app is the electricity disco identifier.
+    // After the numeric-id fix it may be the provider's numeric disco_id
+    // (e.g. '1' for geodnatech Ikeja) or a peyflex slug ('ikeja-electric');
+    // either way it lives in the DB `planCode` field for electricity plans.
     const dbPlan = await lookupPlan(ServicePlan, {
       service:  'electricity',
-      provider: plan,
       planCode: plan,
     });
 
