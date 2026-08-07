@@ -84,16 +84,19 @@ async function lookupPlan(ServicePlan, { service, provider, planCode }) {
     );
   }
 
-  const plan = await ServicePlan.findOne({
-    service,
-    provider,   // may be undefined for electricity (lookup by planCode only)
-    planCode,
-    isActive: true,
-  });
+  // NOTE: `provider` is intentionally omitted for electricity lookups (the
+  // app sends a planCode such as 'ikeja-electric' without a provider).
+  // Do not include `provider` in the filter when it is undefined, otherwise
+  // MongoDB matches against the literal undefined/null value and finds nothing
+  // (reproducing "Plan not found: electricity/undefined/ikeja-electric").
+  const filter = { service, planCode, isActive: true };
+  if (provider) filter.provider = provider;
+
+  const plan = await ServicePlan.findOne(filter);
 
   if (!plan) {
     throw Object.assign(
-      new Error(`Plan not found: ${service}/${provider}/${planCode}. It may not be synced yet.`),
+      new Error(`Plan not found: ${service}${provider ? `/${provider}` : ''}/${planCode}. It may not be synced yet.`),
       { statusCode: 404 }
     );
   }
