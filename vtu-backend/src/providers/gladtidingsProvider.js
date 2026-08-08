@@ -428,14 +428,25 @@ async function purchaseElectricity({ meter, plan, amount, phone, type = 'prepaid
   }
 
   try {
-    const response = await apiClient.post('/v2/billpayment/', {
-      disco_id: await _resolveDiscoId(plan),
-      amount: Number(amount),
-      meter_number: meter,
-      meter_type: type,
+    const disco_id = await _resolveDiscoId(plan);
+    const payload = { disco_id, amount: Number(amount), meter_number: meter, meter_type: type };
+    const maskMeter = (m) => (typeof m === 'string' && m.length > 6 ? `${m.slice(0, 3)}****${m.slice(-3)}` : m);
+
+    // DEBUG LOGGING: capture the exact payload + resolved disco_id sent, so a
+    // plan-code/disco mismatch between the active provider and a synced plan is
+    // visible (e.g. using gladtidings' id against geodnatech-synced plans).
+    console.log('[gladtidingsProvider] Electricity purchase request -> POST /v2/billpayment/', {
+      ...payload,
+      meter_number: maskMeter(meter),
+      rawPlan: plan,
     });
 
+    const response = await apiClient.post('/v2/billpayment/', payload);
     const data = response.data;
+
+    // DEBUG LOGGING: always dump the raw provider response so we can see the
+    // provider's actual error text even if extractErrorMessage can't parse it.
+    console.log(`[gladtidingsProvider] Electricity purchase response (HTTP ${response.status}):`, JSON.stringify(data ?? null));
 
     if (isSuccessResponse(data)) {
       return successResponse({
@@ -444,8 +455,26 @@ async function purchaseElectricity({ meter, plan, amount, phone, type = 'prepaid
       });
     }
 
-    throw new Error(data.api_response || data.message || data.response || 'Electricity purchase failed');
+    const err = new Error(data.api_response || data.message || data.response || 'Electricity purchase failed');
+    err.responseData = data; // carry the raw body for downstream diagnosis
+    throw err;
   } catch (error) {
+    // DEBUG LOGGING: dump the raw provider error (status, body, request) so the
+    // exact Gladtidings error message is visible even when extractErrorMessage
+    // cannot parse it into a clean string.
+    console.error('[gladtidingsProvider] Electricity purchase ERROR', {
+      message:      error.message,
+      code:         error.code,
+      status:       error.response?.status,
+      statusText:   error.response?.statusText,
+      responseData: error.response?.data ?? error.responseData ?? null,
+      request: {
+        url:    error.config?.url,
+        method: error.config?.method,
+        params: error.config?.params,
+        data:   error.config?.data,
+      },
+    });
     throw new Error(`[gladtidings] purchaseElectricity: ${extractErrorMessage(error, 'Electricity purchase failed')}`);
   }
 }

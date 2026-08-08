@@ -226,7 +226,11 @@ async function purchaseElectricity({ meter, plan, amount, phone, type = 'prepaid
     phone,
   });
 
+  // DEBUG LOGGING: dump the raw peyflex response so its exact error text is visible.
+  console.log('[peyflexProvider] Electricity purchase response:', JSON.stringify(response ?? null));
+
   if (response.status !== 'SUCCESS') {
+    console.error('[peyflexProvider] Electricity purchase FAILED:', JSON.stringify(response ?? null));
     const err = new Error(response.message || 'Electricity purchase failed.');
     err.providerResponse = response;
     throw err;
