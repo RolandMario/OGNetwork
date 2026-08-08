@@ -342,8 +342,15 @@ exports.verifyMeter = async (req, res) => {
     // (e.g. peyflex slug plans while gladtidings is the configured provider),
     // which previously surfaced as "Invalid Request Parameters".
     const candidates = await getElectricityProviderCandidates(req.models.AdminConfig);
+    const primaryProvider = candidates[0]; // the admin-configured (ACTIVE) provider
+
+    console.log(
+      `[vtuController] verifyMeter — ACTIVE electricity provider: "${primaryProvider.name}" | ` +
+      `fallback order: ${candidates.map((c) => c.name).join(' -> ')}`
+    );
 
     let lastError = null;
+    let primaryError = null; // error from the ACTIVE (admin-configured) provider
     let firstUnknownResult = null; // first non-throwing response (even if name is 'unknown')
 
     for (const provider of candidates) {
@@ -370,6 +377,7 @@ exports.verifyMeter = async (req, res) => {
         if (!firstUnknownResult) firstUnknownResult = data;
       } catch (err) {
         lastError = err;
+        if (provider === primaryProvider) primaryError = err;
         console.warn(`[vtuController] verifyMeter via "${provider.name}" failed: ${err.message}`);
       }
     }
@@ -379,8 +387,12 @@ exports.verifyMeter = async (req, res) => {
       return res.status(200).json({ status: 'success', data: firstUnknownResult });
     }
 
-    // Every provider failed — surface the last (primary) error.
-    throw lastError || new Error('Meter verification failed for all providers.');
+    // Every provider failed — surface the ACTIVE (admin-configured) provider's
+    // error, NOT the last fallback tried, so logs/alerts reflect the admin's
+    // selection instead of always mentioning the final provider in the list.
+    const primaryOrLast = primaryError || lastError || new Error('Meter verification failed for all providers.');
+    primaryOrLast.message = `${primaryOrLast.message} (tried providers: ${candidates.map((c) => c.name).join(', ')})`;
+    throw primaryOrLast;
   } catch (error) {
     res.status(error.statusCode || 500).json({ status: 'error', message: error.message });
   }
@@ -731,8 +743,17 @@ exports.buyElectricity = async (req, res) => {
     //    other provider that can handle this plan (mirrors meter verification
     //    so a plan synced from one provider still works when another is active).
     const candidates = await getElectricityProviderCandidates(req.models.AdminConfig);
+    const primaryProvider = candidates[0]; // the admin-configured (ACTIVE) provider
+
+    console.log(
+      `[vtuController] buyElectricity — ACTIVE electricity provider: "${primaryProvider.name}" | ` +
+      `fallback order: ${candidates.map((c) => c.name).join(' -> ')}`
+    );
+
     let providerResponse = null;
     let providerError = null;
+    let primaryError = null; // error from the ACTIVE (admin-configured) provider
+    let purchasedViaProvider = null; // name of the provider that actually fulfilled the purchase
     for (const electricityProvider of candidates) {
       try {
         providerResponse = await electricityProvider.purchaseElectricity({
@@ -742,14 +763,23 @@ exports.buyElectricity = async (req, res) => {
           phone,
           type,
         });
+        purchasedViaProvider = electricityProvider.name;
         break; // success — stop trying further providers
       } catch (err) {
         providerError = err;
+        if (electricityProvider === primaryProvider) primaryError = err;
         console.warn(`[vtuController] buyElectricity via "${electricityProvider.name}" failed: ${err.message}`);
       }
     }
 
-    if (!providerResponse) throw providerError || new Error('Electricity purchase failed for all providers.');
+    if (!providerResponse) {
+      // Surface the ACTIVE (admin-configured) provider's error, NOT the last
+      // fallback tried, so logs/alerts reflect the admin's selection instead of
+      // always mentioning the final provider in the list.
+      const primaryOrLast = primaryError || providerError || new Error('Electricity purchase failed for all providers.');
+      primaryOrLast.message = `${primaryOrLast.message} (tried providers: ${candidates.map((c) => c.name).join(', ')})`;
+      throw primaryOrLast;
+    }
 
     // 5. Calculate profit = surcharge amount in kobo
     const electricityProfitKobo = Math.round((chargeAmount - Number(amount)) * 100);
@@ -768,6 +798,7 @@ exports.buyElectricity = async (req, res) => {
           planName:    dbPlan.planName,
           meterType:   type,
           token:       providerResponse.token || providerResponse.providerTxId,
+          provider:    purchasedViaProvider || primaryProvider.name,
         },
       }
     );
@@ -783,6 +814,7 @@ exports.buyElectricity = async (req, res) => {
         amount:     chargeAmount,
         token:      providerResponse.token || providerResponse.providerTxId,
         newBalance: txData.newBalance / 100,
+        provider:   purchasedViaProvider || primaryProvider.name,
         providerRef: providerResponse.providerTxId || providerResponse.reference,
       },
     });
