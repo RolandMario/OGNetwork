@@ -486,16 +486,26 @@ async function purchaseElectricity({ meter, plan, amount, phone, type = 'prepaid
   }
 
   try {
-    // Geodnatech expects the meter type as a descriptive string (e.g. 'prepaid'|'postpaid')
-    // (verifyMeter uses 'meter_type' for validation). Send meter_type as a string here.
-    const response = await apiClient.post('/billpayment/', {
-      disco_name: await _resolveDiscoId(plan),
-      amount: Number(amount),
-      meter_number: meter,
-      meter_type: String(type),
+    // Geodnatech expects the DISCO as its numeric primary key (disco_id), the same
+    // field used by verifyMeter (/validatemeter/). Sending it as `disco_name` with a
+    // numeric value caused the provider to reject the purchase.
+    // The meter type is a descriptive string (e.g. 'prepaid'|'postpaid').
+    const disco_id  = await _resolveDiscoId(plan);
+    const payload   = { disco_id, amount: Number(amount), meter_number: meter, meter_type: String(type) };
+    const maskMeter = (m) => (typeof m === 'string' && m.length > 6 ? `${m.slice(0, 3)}****${m.slice(-3)}` : m);
+
+    // DEBUG LOGGING: capture the exact payload sent so provider rejections are traceable.
+    console.log('[geodnatechProvider] Electricity purchase request -> POST /billpayment/', {
+      ...payload,
+      meter_number: maskMeter(meter),
     });
 
-    const data = response.data;
+    const response = await apiClient.post('/billpayment/', payload);
+    const data     = response.data;
+
+    // DEBUG LOGGING: always dump the raw provider response (HTTP status + body),
+    // even on success, so unexpected response shapes are easy to diagnose.
+    console.log(`[geodnatechProvider] Electricity purchase response (HTTP ${response.status}):`, JSON.stringify(data ?? null));
 
     if (isSuccessResponse(data)) {
       return successResponse({
@@ -506,6 +516,22 @@ async function purchaseElectricity({ meter, plan, amount, phone, type = 'prepaid
 
     throw new Error(data.api_response || data.message || data.response || 'Electricity purchase failed');
   } catch (error) {
+    // DEBUG LOGGING: dump the raw provider error (status, body, request) so the
+    // exact Geodnatech error message is visible even when extractErrorMessage
+    // cannot parse it into a clean string.
+    console.error('[geodnatechProvider] Electricity purchase ERROR', {
+      message:      error.message,
+      code:         error.code,
+      status:       error.response?.status,
+      statusText:   error.response?.statusText,
+      responseData: error.response?.data ?? null,
+      request: {
+        url:    error.config?.url,
+        method: error.config?.method,
+        params: error.config?.params,
+        data:   error.config?.data,
+      },
+    });
     throw new Error(`[geodnatech] purchaseElectricity: ${extractErrorMessage(error, 'Electricity purchase failed')}`);
   }
 }
