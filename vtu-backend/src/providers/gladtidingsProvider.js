@@ -450,7 +450,12 @@ async function purchaseElectricity({ meter, plan, amount, phone, type = 'prepaid
 
   try {
     const disco_id = await _resolveDiscoId(plan);
-    const payload = { disco_id, amount: Number(amount), meter_number: meter, meter_type: type };
+    // Gladtidings' /v2/billpayment/ expects the meter type in camelCase `MeterType`
+    // with TITLE-CASED values ('Prepaid'|'Postpaid'). The lowercase `meter_type`
+    // field (used by geodnatech/datastation) is ignored here and causes the
+    // provider to return an empty HTTP 500.
+    const meterType = type === 'postpaid' ? 'Postpaid' : 'Prepaid';
+    const payload = { disco_id, amount: Number(amount), meter_number: meter, MeterType: meterType };
     const maskMeter = (m) => (typeof m === 'string' && m.length > 6 ? `${m.slice(0, 3)}****${m.slice(-3)}` : m);
 
     // DEBUG LOGGING: capture the exact payload + resolved disco_id sent, so a
