@@ -377,14 +377,35 @@ async function _resolveDiscoId(value) {
   if (value === undefined || value === null || String(value).trim() === '') {
     throw new Error(`[gladtidings] Invalid disco pk value: ${value}`);
   }
-  // Already numeric (the provider's disco_id)
-  if (String(value).trim() !== '' && !Number.isNaN(Number(value))) {
-    return Number(value);
+
+  const num = Number(value);
+  const isNumeric = String(value).trim() !== '' && !Number.isNaN(num);
+
+  if (isNumeric) {
+    // Verify this disco_id actually belongs to THIS provider's disco list. If a
+    // plan was synced from a DIFFERENT provider, its numeric id won't exist here
+    // and the provider's /billpayment/ would throw an opaque 500 — so fail fast
+    // with a clear, actionable message instead.
+    const discos = await _fetchDiscoList();
+    const found = discos.some((d) => {
+      const id = d?.id ?? d?.disco_id ?? d?.plan_id;
+      return id !== undefined && id !== null && Number(id) === num;
+    });
+    if (!found) {
+      throw new Error(
+        `[gladtidings] disco_id ${num} was not found in the active provider's electricity list. ` +
+        `Re-sync electricity plans from the active provider (gladtidings) before purchasing.`
+      );
+    }
+    return num;
   }
+
   const needle = _normalizeDisco(value);
   const discos = await _fetchDiscoList();
   for (const disco of discos) {
-    if (disco && _normalizeDisco(disco?.name) === needle) return Number(disco?.id);
+    if (disco && _normalizeDisco(disco?.name) === needle) {
+      return Number(disco?.id ?? disco?.disco_id ?? disco?.plan_id);
+    }
   }
   throw new Error(`[gladtidings] Invalid disco pk value: ${value}`);
 }
