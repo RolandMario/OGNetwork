@@ -822,6 +822,18 @@ exports.buyElectricity = async (req, res) => {
   } catch (error) {
     console.error('buyElectricity error:', error.message);
     if (txData) await reverseAndFail({ transaction: txData.transaction, previousBalance: txData.previousBalance, Wallet, Transaction, reason: error.message });
-    res.status(error.statusCode || 500).json({ status: 'error', message: error.message });
+
+    let message = error.message;
+
+    // The purchase sum is debited from the VTU provider's RESELLER account, not
+    // the customer's app wallet. If the provider reports a low balance, make that
+    // unmistakably clear so the admin funds the right account instead of chasing
+    // code bugs (and so the customer knows they were auto-refunded).
+    if (/insufficient balance|your current balance/i.test(message)) {
+      message = `${message} — the VTU provider's API account is low on funds. ` +
+        `Fund the active electricity provider's account and retry (any debited amount was automatically refunded).`;
+    }
+
+    res.status(error.statusCode || 500).json({ status: 'error', message });
   }
 };
