@@ -65,43 +65,88 @@ function successResponse({ providerTxId, message }) {
 }
 
 /**
- * Extract a clean error message from an axios error.
+ * Best-effort extraction of a human-readable message from a raw provider body.
+ * Scans common error field names across the reseller VTU APIs; as a last resort
+ * returns the serialized body so the provider's actual response is never hidden
+ * behind a generic fallback like "Electricity purchase failed".
+ * @param {*} data - The raw provider response body (object or string)
+ * @param {string} fallback
+ * @returns {string}
+ */
+function extractProviderMessage(data, fallback = '') {
+  if (typeof data === 'string') {
+    const trimmed = data.trim();
+    if (trimmed) return trimmed;
+    return fallback;
+  }
+  if (!data || typeof data !== 'object') return fallback;
+
+  const status = data.status ?? data.Status;
+  const statusIsError =
+    typeof status === 'string' && !['success', 'successful', 'true'].includes(status.toLowerCase());
+
+  // Preferred: specific error message fields (more useful than a bare `status`).
+  const direct =
+    data.message ||
+    data.detail ||
+    data.error ||
+    data.errormessage ||
+    data.error_message ||
+    data.errorMessage ||
+    data.msg ||
+    data.api_response ||
+    data.response ||
+    data.reason ||
+    data.failure_reason ||
+    data.failureReason ||
+    data.FailureReason ||
+    data.description ||
+    data.fail;
+  if (direct) return String(direct).trim();
+
+  // Django REST Framework error format: { field: ["error message"] } or { field: "message" }
+  // (skip the bare `status`/`Status` key — it's handled below).
+  const firstKey = Object.keys(data).find((k) => k !== 'status' && k !== 'Status');
+  if (firstKey !== undefined) {
+    const firstVal = data[firstKey];
+    if (Array.isArray(firstVal) && firstVal.length > 0) return `${firstKey}: ${String(firstVal[0])}`;
+    if (typeof firstVal === 'string') return firstVal;
+  }
+
+  // Bare status like "failed" is better than nothing.
+  if (statusIsError) return String(status).trim();
+
+  // Last resort — surface the actual raw body (truncated) so it's never lost.
+  try {
+    const json = JSON.stringify(data);
+    if (json) return json.slice(0, 2000);
+  } catch (e) {
+    /* ignore */
+  }
+  return fallback;
+}
+
+/**
+ * Extract a clean error message from an axios error (or any thrown error that
+ * carries the raw provider body via `response` or `responseData`).
  * @param {Error} error
  * @param {string} fallback
  * @returns {string}
  */
 function extractErrorMessage(error, fallback = 'Service temporarily unavailable') {
-  if (error.response) {
-    const data = error.response.data;
-    // Try common error response shapes
-    const direct =
-      data?.message ||
-      data?.detail ||
-      data?.error ||
-      data?.msg ||
-      data?.api_response ||
-      data?.Status ||
-      data?.status ||
-      (typeof data === 'string' ? data : null);
-    if (direct) return direct;
-
-    // Django REST Framework error format: { field: ["error message"] }
-    if (data && typeof data === 'object') {
-      const firstKey = Object.keys(data)[0];
-      const firstVal = data[firstKey];
-      if (Array.isArray(firstVal) && firstVal.length > 0) {
-        return `${firstKey}: ${firstVal[0]}`;
-      }
-      if (typeof firstVal === 'string') return firstVal;
-    }
-
-    return fallback;
+  // If the error carries the raw provider body (an axios `response`, or a plain
+  // error with `responseData` attached), extract the REAL provider message from it.
+  const rawData = error?.response?.data ?? error?.responseData;
+  if (rawData !== undefined && rawData !== null) {
+    const msg = extractProviderMessage(rawData);
+    if (msg) return msg;
   }
   if (error.code === 'ECONNABORTED') return 'Request timed out. Please try again.';
   if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED') {
     return 'Provider service is unreachable.';
   }
-  return error.message || fallback;
+  if (typeof error === 'string' && error.trim()) return error.trim();
+  return (error && error.message) || fallback;
 }
 
 /**
@@ -127,6 +172,7 @@ module.exports = {
   getNetworkCode,
   successResponse,
   extractErrorMessage,
+  extractProviderMessage,
   isSuccessResponse,
   DEFAULT_NETWORK_MAP,
 };

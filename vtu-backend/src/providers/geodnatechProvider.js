@@ -8,7 +8,7 @@
 // Base URL: https://geodnatech.com/api
 
 const axios = require('axios');
-const { createApiClient, getNetworkCode, successResponse, extractErrorMessage, isSuccessResponse } = require('./baseProvider');
+const { createApiClient, getNetworkCode, successResponse, extractErrorMessage, extractProviderMessage, isSuccessResponse } = require('./baseProvider');
 
 const API_KEY = process.env.GEODNATECH_API_KEY;
 const BASE_URL = process.env.GEODNATECH_BASE_URL || 'https://geodnatech.com/api';
@@ -514,7 +514,9 @@ async function purchaseElectricity({ meter, plan, amount, phone, type = 'prepaid
       });
     }
 
-    throw new Error(data.api_response || data.message || data.response || 'Electricity purchase failed');
+    const err = new Error(extractProviderMessage(data, 'Electricity purchase failed'));
+    err.responseData = data; // carry the raw body so the real provider message is surfaced
+    throw err;
   } catch (error) {
     // DEBUG LOGGING: dump the raw provider error (status, body, request) so the
     // exact Geodnatech error message is visible even when extractErrorMessage

@@ -5,7 +5,7 @@
 
 const https = require('https');
 const { URL } = require('url');
-const { successResponse, extractErrorMessage } = require('./baseProvider');
+const { successResponse, extractErrorMessage, extractProviderMessage } = require('./baseProvider');
 
 const API_KEY = process.env.PAYFLEX_PROVIDER_API_KEY;
 const BASE_URL = process.env.PAYFLEX_BASE_URL || 'https://client.peyflex.com.ng';
@@ -231,8 +231,9 @@ async function purchaseElectricity({ meter, plan, amount, phone, type = 'prepaid
 
   if (response.status !== 'SUCCESS') {
     console.error('[peyflexProvider] Electricity purchase FAILED:', JSON.stringify(response ?? null));
-    const err = new Error(response.message || 'Electricity purchase failed.');
+    const err = new Error(extractProviderMessage(response, 'Electricity purchase failed.'));
     err.providerResponse = response;
+    err.responseData = response; // carry the raw body so the real provider message is surfaced
     throw err;
   }
 
