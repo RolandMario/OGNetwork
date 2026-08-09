@@ -171,7 +171,7 @@ async function syncCablePlans(ServicePlan, { providerName, AdminConfig } = {}) {
  * @param {Object} [options.AdminConfig] - AdminConfig model for reading provider map
  */
 async function syncElectricityPlans(ServicePlan, { providerName, AdminConfig } = {}) {
-  const results = { synced: 0, skipped: 0, errors: [] };
+  const results = { synced: 0, updated: 0, skipped: 0, errors: [] };
 
   // Determine which provider to use
   let provider;
@@ -203,7 +203,42 @@ async function syncElectricityPlans(ServicePlan, { providerName, AdminConfig } =
       });
 
       if (existing) {
-        results.skipped++;
+        // The ServicePlan unique index is { service, provider, planCode }, so a
+        // disco-plan key can exist only once across ALL VTU providers. Some
+        // providers share the same disco slugs AND numeric disco_ids (e.g.
+        // datastation 1-11 and geodnatech 1-12), so without this re-tag the
+        // second provider's plans would all be skipped and only DISCOs unique to
+        // it (e.g. geodnatech's Aba Electric = 12) would ever be stored.
+        if (existing.metadata?.syncedFromProvider === providerLabel) {
+          // Same provider already owns this plan — leave admin pricing untouched.
+          results.skipped++;
+        } else {
+          // The plan key exists but belongs to a different VTU provider —
+          // re-tag it to the CURRENT active provider so the electricity plans
+          // endpoint shows it. Prices (ourPrice/prices) are preserved so no
+          // admin customization is lost.
+          await ServicePlan.updateOne(
+            { _id: existing._id },
+            {
+              $set: {
+                planName:    plan.plan_name,
+                description: plan.plan_name,
+                providerPrice: Number(plan.min_amount),
+                metadata: {
+                  ...(existing.metadata || {}),
+                  plan_name:         plan.plan_name,
+                  min_amount:        plan.min_amount,
+                  max_amount:        plan.max_amount,
+                  type:              'prepaid',
+                  syncedFromProvider: providerLabel,
+                },
+                lastSyncedAt: new Date(),
+                _providerData: plan,
+              },
+            }
+          );
+          results.updated++;
+        }
       } else {
         const providerPrice = Number(plan.min_amount);
         await ServicePlan.create({

@@ -735,7 +735,7 @@ exports.syncElectricityPlans = async (req, res) => {
     res.status(200).json({
       status: 'success',
       data: results,
-      message: `Synced ${results.synced} electricity plans, ${results.skipped} skipped. ${results.errors.length} errors.`,
+      message: `Synced ${results.synced} electricity plans, ${results.updated} re-tagged to active provider, ${results.skipped} skipped. ${results.errors.length} errors.`,
     });
   } catch (error) {
     console.error('[adminController.syncElectricityPlans] error:', error.message);

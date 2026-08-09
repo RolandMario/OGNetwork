@@ -170,13 +170,14 @@ export default function PlansPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Sync failed");
 
-      // Backend returns { synced, skipped, errors }
+      // Backend returns { synced, updated, skipped, errors }
       const syncData = data.data || {};
       const synced = syncData.synced || 0;
+      const updated = syncData.updated || 0;
       const skipped = syncData.skipped || 0;
       const errors = syncData.errors || [];
 
-      let msg = `${synced} new plans created, ${skipped} existing plans skipped.`;
+      let msg = `${synced} new plans created, ${updated} re-tagged to active provider, ${skipped} existing plans skipped.`;
       if (errors.length > 0) {
         msg += `\n\nErrors (${errors.length}):\n${errors.slice(0, 5).join('\n')}`;
         if (errors.length > 5) msg += `\n...and ${errors.length - 5} more`;
