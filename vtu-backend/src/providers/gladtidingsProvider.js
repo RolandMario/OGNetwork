@@ -416,10 +416,13 @@ async function verifyMeter({ meter, plan, type = 'prepaid' }) {
   }
 
   try {
+    const disco_id = await _resolveDiscoId(plan);
+    console.log('[gladtidingsProvider] Meter verify request -> GET /v2/validatemeter/', { disco_id, meter_number: meter, meter_type: type, rawPlan: plan });
     const response = await apiClient.get('/v2/validatemeter/', {
-      params: { disco_id: await _resolveDiscoId(plan), meter_type: type, meter_number: meter },
+      params: { disco_id, meter_type: type, meter_number: meter },
     });
     const data = response.data;
+    console.log(`[gladtidingsProvider] Meter verify response (HTTP ${response.status}):`, JSON.stringify(data ?? null));
 
     // Gladtidings returns { invalid: true, name: "INVALID METER NUMBER" } for invalid meters
     if (data && data.invalid === true) {

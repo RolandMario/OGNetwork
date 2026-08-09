@@ -84,12 +84,12 @@ async function lookupPlan(ServicePlan, { service, provider, planCode }) {
     );
   }
 
-  // NOTE: `provider` is intentionally omitted for electricity lookups (the
-  // app sends a planCode such as 'ikeja-electric' without a provider).
-  // Do not include `provider` in the filter when it is undefined, otherwise
-  // MongoDB matches against the literal undefined/null value and finds nothing
+  // NOTE: `provider` and `planCode` are intentionally omitted when undefined —
+  // do not include undefined fields in the filter, otherwise MongoDB matches
+  // against the literal undefined/null value and finds nothing
   // (reproducing "Plan not found: electricity/undefined/ikeja-electric").
-  const filter = { service, planCode, isActive: true };
+  const filter = { service, isActive: true };
+  if (planCode) filter.planCode = planCode;
   if (provider) filter.provider = provider;
 
   const plan = await ServicePlan.findOne(filter);
@@ -286,7 +286,7 @@ exports.getElectricityPlans = async (req, res) => {
     if (ServicePlan) {
       // Return from DB (with ourPrice)
       let plans = await ServicePlan.find({ service: 'electricity', isActive: true })
-        .select('_id planCode planName description ourPrice metadata')
+        .select('_id planCode provider planName description ourPrice metadata')
         .sort({ planName: 1 })
         .lean();
 
@@ -693,14 +693,26 @@ exports.buyElectricity = async (req, res) => {
 
   try {
     // 1. Look up plan from DB — validate amount range
-    // The planCode sent from the mobile app is the electricity disco identifier.
-    // After the numeric-id fix it may be the provider's numeric disco_id
-    // (e.g. '1' for geodnatech Ikeja) or a peyflex slug ('ikeja-electric');
-    // either way it lives in the DB `planCode` field for electricity plans.
-    const dbPlan = await lookupPlan(ServicePlan, {
-      service:  'electricity',
-      planCode: plan,
-    });
+    // The `plan` sent from the mobile app is now the provider-agnostic DISCO slug
+    // (e.g. 'ikeja-electric'), which maps to the DB `provider` field, while
+    // `planCode` holds the provider-specific numeric disco_id. Try `planCode`
+    // first (legacy/peyflex plans where the slug == planCode), then `provider`.
+    let dbPlan = null;
+    try {
+      dbPlan = await lookupPlan(ServicePlan, {
+        service:  'electricity',
+        planCode: plan,
+      });
+    } catch (err) {
+      if (err.statusCode === 404) {
+        dbPlan = await lookupPlan(ServicePlan, {
+          service:  'electricity',
+          provider: plan,
+        });
+      } else {
+        throw err;
+      }
+    }
 
     const minAmount = dbPlan.metadata?.min_amount || 100;
     const maxAmount = dbPlan.metadata?.max_amount || 1000000;

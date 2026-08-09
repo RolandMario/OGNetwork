@@ -101,10 +101,12 @@ const BuyElectricityScreen = ({ navigation }) => {
 
     try {
       // GET /vtu/electricity/verify?meter=XXX&plan=ikeja-electric&type=prepaid
+      // Send the provider-agnostic DISCO slug (fallback: planCode) so every
+      // provider can resolve it to its own numeric disco_id.
       const response = await apiClient.get(API_ROUTES.VTU.ELECTRICITY_VERIFY, {
         params: {
           meter: meterNumber,
-          plan:  selectedDisco.planCode,
+          plan:  selectedDisco.provider || selectedDisco.planCode,
           type:  meterType,
         },
       });
@@ -163,7 +165,7 @@ const BuyElectricityScreen = ({ navigation }) => {
 
     try {
       const response = await apiClient.post(API_ROUTES.VTU.BUY_ELECTRICITY, {
-        plan:   selectedDisco.planCode,
+        plan:   selectedDisco.provider || selectedDisco.planCode, // DISCO slug first
         meter:  meterNumber,
         amount: Number(amount),
         phone:  meterNumber, // Peyflex requires phone; use meter as fallback

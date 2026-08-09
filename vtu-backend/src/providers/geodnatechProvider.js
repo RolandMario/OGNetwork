@@ -474,10 +474,13 @@ async function verifyMeter({ meter, plan, type = 'prepaid' }) {
   }
 
   try {
+    const disco_id = await _resolveDiscoId(plan);
+    console.log('[geodnatechProvider] Meter verify request -> GET /validatemeter/', { disco_id, meter_number: meter, meter_type: type, rawPlan: plan });
     const response = await apiClient.get('/validatemeter/', {
-      params: { disco_id: await _resolveDiscoId(plan), meter_number: meter, meter_type: type },
+      params: { disco_id, meter_number: meter, meter_type: type },
     });
     const data = response.data;
+    console.log(`[geodnatechProvider] Meter verify response (HTTP ${response.status}):`, JSON.stringify(data ?? null));
 
     // Geodnatech returns { invalid: true, name: "INVALID METER NUMBER" } for invalid meters
     if (data && data.invalid === true) {
