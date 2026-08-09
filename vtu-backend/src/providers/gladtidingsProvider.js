@@ -527,7 +527,7 @@ async function purchaseElectricity({ meter, plan, amount, phone, type = 'prepaid
     //   customer_name / customer_address -> optional, taken from meter verification
     const meterType = type === 'postpaid' ? 'Postpaid' : 'Prepaid';
     const payload = {
-      disco_name: disco_id,
+      disco_id: disco_id,
       amount: Number(amount),
       meter_number: meter,
       MeterType: meterType,
