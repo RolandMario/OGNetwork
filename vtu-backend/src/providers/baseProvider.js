@@ -56,10 +56,11 @@ function getNetworkCode(network, networkMap = DEFAULT_NETWORK_MAP) {
  * @param {string} options.message
  * @returns {Object}
  */
-function successResponse({ providerTxId, message }) {
+function successResponse({ providerTxId, token, message }) {
   return {
     success: true,
     providerTxId,
+    token: token || '',
     message: message || 'Transaction successful',
   };
 }

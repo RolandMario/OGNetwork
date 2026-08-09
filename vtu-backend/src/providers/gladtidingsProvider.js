@@ -562,6 +562,7 @@ async function purchaseElectricity({ meter, plan, amount, phone, type = 'prepaid
     if (isSuccessResponse(data)) {
       return successResponse({
         providerTxId: data.transaction_id || data.id || data.reference || data.token || '',
+        token: data.token || '',
         message: data.message || 'Electricity purchase successful',
       });
     }

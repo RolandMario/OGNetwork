@@ -731,11 +731,40 @@ exports.buyElectricity = async (req, res) => {
       });
     }
 
-    // 2. Apply surcharge if set by admin (e.g. 2% = 0.02)
+    // 2. Resolve the active electricity provider and its fallbacks ONCE (used by
+    //    the pre-flight meter check below and the purchase loop).
+    const candidates = await getElectricityProviderCandidates(req.models.AdminConfig);
+    const primaryProvider = candidates[0]; // the admin-configured (ACTIVE) provider
+
+    console.log(
+      `[vtuController] buyElectricity — ACTIVE electricity provider: "${primaryProvider.name}" | ` +
+      `fallback order: ${candidates.map((c) => c.name).join(' -> ')}`
+    );
+
+    // 2.5 Pre-flight meter check — BEFORE debiting the user. Some providers
+    //     (notably geodnatech) mark a purchase "successful" even for a meter
+    //     they cannot verify and return no token, silently charging the user
+    //     for nothing. If the ACTIVE provider explicitly reports an invalid
+    //     meter (HTTP 400), fail fast. Transient/network errors are logged and
+    //     ignored so the candidate loop below can still attempt the purchase.
+    try {
+      await primaryProvider.verifyMeter({ meter, plan, type });
+    } catch (verifyErr) {
+      if (verifyErr.statusCode === 400) {
+        return res.status(400).json({
+          status:  'fail',
+          message: `Meter ${meter} could not be verified on the active electricity provider (${primaryProvider.name}). ` +
+                   `Please check the meter number or switch the active electricity provider.`,
+        });
+      }
+      console.warn(`[vtuController] buyElectricity pre-flight meter check via "${primaryProvider.name}" warning: ${verifyErr.message}`);
+    }
+
+    // 3. Apply surcharge if set by admin (e.g. 2% = 0.02)
     const surcharge = dbPlan.metadata?.surchargePercent || 0;
     const chargeAmount = Math.ceil(Number(amount) * (1 + surcharge / 100));
 
-    // 3. Debit user at chargeAmount (includes markup)
+    // 4. Debit user at chargeAmount (includes markup)
     txData = await debitWalletAndCreateTx({
       userId,
       amountNaira: chargeAmount,
@@ -751,16 +780,9 @@ exports.buyElectricity = async (req, res) => {
       Transaction,
     });
 
-    // 4. Purchase electricity — try the configured provider first, then any
+    // 5. Purchase electricity — try the configured provider first, then any
     //    other provider that can handle this plan (mirrors meter verification
     //    so a plan synced from one provider still works when another is active).
-    const candidates = await getElectricityProviderCandidates(req.models.AdminConfig);
-    const primaryProvider = candidates[0]; // the admin-configured (ACTIVE) provider
-
-    console.log(
-      `[vtuController] buyElectricity — ACTIVE electricity provider: "${primaryProvider.name}" | ` +
-      `fallback order: ${candidates.map((c) => c.name).join(' -> ')}`
-    );
 
     let providerResponse = null;
     let providerError = null;

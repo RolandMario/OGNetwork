@@ -560,18 +560,29 @@ async function verifyMeter({ meter, plan, type = 'prepaid' }) {
   }
 }
 
-async function purchaseElectricity({ meter, plan, amount, phone, type = 'prepaid' }) {
+async function purchaseElectricity({ meter, plan, amount, phone, type = 'prepaid', customerName, customerAddress }) {
   if (!meter || !plan || !amount || !phone) {
     throw new Error('[datastation] purchaseElectricity: meter, plan, amount and phone are required.');
   }
 
   try {
-    // DataStation expects the DISCO as its numeric primary key (disco_id), the same
-    // field used by verifyMeter (/validatemeter/). Sending it as `disco_name` with a
-    // numeric value caused the provider to reject the purchase.
-    // The meter type is a descriptive string (e.g. 'prepaid'|'postpaid').
-    const disco_id  = await _resolveDiscoId(plan);
-    const payload   = { disco_id, amount: Number(amount), meter_number: meter, meter_type: String(type) };
+    // DataStation's /billpayment/ is a DRF "Bill Payment" endpoint — the same
+    // platform family as Gladtidings/Geodnatech. It expects `disco_name`
+    // carrying the NUMERIC disco_id (the pk that /validatemeter/ uses in its
+    // `disco_id` query param), plus camelCase `MeterType` and `Customer_Phone`.
+    // Sending `disco_id` and lowercase `meter_type` in the body makes the
+    // provider reject the request (HTTP 400 on datastation).
+    const disco_id   = await _resolveDiscoId(plan);
+    const meterType  = type === 'postpaid' ? 'Postpaid' : 'Prepaid';
+    const payload    = {
+      disco_name: disco_id,
+      amount: Number(amount),
+      meter_number: meter,
+      MeterType: meterType,
+      Customer_Phone: phone,
+      ...(customerName ? { customer_name: customerName } : {}),
+      ...(customerAddress ? { customer_address: customerAddress } : {}),
+    };
     const maskMeter = (m) => (typeof m === 'string' && m.length > 6 ? `${m.slice(0, 3)}****${m.slice(-3)}` : m);
 
     // DEBUG LOGGING: capture the exact payload sent so provider rejections are traceable.
@@ -590,6 +601,7 @@ async function purchaseElectricity({ meter, plan, amount, phone, type = 'prepaid
     if (isSuccessResponse(data)) {
       return successResponse({
         providerTxId: data.transaction_id || data.id || data.reference || data.token || '',
+        token: data.token || '',
         message: data.message || 'Electricity purchase successful',
       });
     }
