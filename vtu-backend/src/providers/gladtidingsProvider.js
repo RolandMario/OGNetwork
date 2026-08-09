@@ -273,17 +273,51 @@ const ELECTRICITY_NAME_TO_ID = {
   'yola': 'yola-electric',
   'benin electric': 'benin-electric',
   'benin': 'benin-electric',
+  'aba electric': 'aba-electric',
+  'aba': 'aba-electric',
 };
 
+// ---------------------------------------------------------------------------
+// Gladtidings DISCO list — disco_id ⇄ disco name (from Gladtidings docs)
+// ---------------------------------------------------------------------------
+// Documented Gladtidings electricity DISCOs. These numeric disco_id values are
+// what the /v2/validatemeter/ and /v2/billpayment/ endpoints expect, so this
+// list is the authoritative source for plan syncing, meter verification and
+// purchase.
+//
+//   (1) 18 = Ikeja Electric      (7) 24 = Jos Electric
+//   (2) 19 = Ibadan Electric     (8) 25 = Abuja Electric
+//   (3) 20 = Eko Electric        (9) 26 = Enugu Electric
+//   (4) 21 = Port Harcourt      (10) 28 = Yola Electric
+//   (5) 22 = Kaduna Electric    (11) 29 = Benin Electric
+//   (6) 23 = Kano Electric      (12) 30 = Aba Electric
+const DISCO_LIST = [
+  { disco_id: 18, name: 'Ikeja Electric' },
+  { disco_id: 19, name: 'Ibadan Electric' },
+  { disco_id: 20, name: 'Eko Electric' },
+  { disco_id: 21, name: 'Port Harcourt Electric' },
+  { disco_id: 22, name: 'Kaduna Electric' },
+  { disco_id: 23, name: 'Kano Electric' },
+  { disco_id: 24, name: 'Jos Electric' },
+  { disco_id: 25, name: 'Abuja Electric' },
+  { disco_id: 26, name: 'Enugu Electric' },
+  { disco_id: 28, name: 'Yola Electric' },
+  { disco_id: 29, name: 'Benin Electric' },
+  { disco_id: 30, name: 'Aba Electric' },
+];
+
 /**
- * Build electricity plans from the provider's /disco/ endpoint.
- * Each DISCO is returned as { id (numeric disco_id), name } and normalized to
- * { plans: [...] } with the numeric disco_id as plan_code.
+ * Build electricity plans for Gladtidings.
+ * The DISCO list comes from _fetchDiscoList(), which uses the documented
+ * Gladtidings disco IDs/names (DISCO_LIST, e.g. 18=Ikeja Electric, 30=Aba
+ * Electric) and only supplements them with the live /disco/ endpoint.
+ * Each DISCO is normalized to { plans: [...] } with the numeric disco_id as plan_code.
  */
 async function getElectricityPlans() {
   try {
-    // Build the DISCO list from the provider's /disco/ endpoint, which returns
-    // each DISCO as { id (numeric disco_id), name }.
+    // Build the DISCO list from _fetchDiscoList(), which starts from the
+    // documented Gladtidings disco IDs/names (DISCO_LIST: 18=Ikeja … 30=Aba)
+    // and only supplements them with the live /disco/ endpoint.
     const electricityList = await _fetchDiscoList();
 
     const plans = [];
@@ -346,17 +380,45 @@ async function getElectricityPlansRaw() {
 // ---------------------------------------------------------------------------
 // Electricity DISCO id resolution
 // ---------------------------------------------------------------------------
-// The provider exposes the DISCO list (numeric disco_id + name) at GET /disco/.
-// The app may send a disco as a numeric id, a slug ('ikeja-electric'), or a
-// name ('Ikeja Electric'). Resolve it to the numeric disco_id required by the
-// provider's /validatemeter/ and /billpayment/ endpoints.
+// The documented DISCO list (DISCO_LIST above) is authoritative — it matches
+// the Gladtidings docs (18=Ikeja … 30=Aba). The live /disco/ endpoint is still
+// consulted so any DISCO Gladtidings adds later is merged in, but a documented
+// disco_id/name is never overridden. The app may send a disco as a numeric id,
+// a slug ('ikeja-electric'), or a name ('Ikeja Electric'); resolve it to the
+// numeric disco_id required by the provider's /v2/validatemeter/ and
+// /v2/billpayment/ endpoints.
 let _discoCache = null;
 
 async function _fetchDiscoList() {
   if (_discoCache) return _discoCache;
-  const response = await apiClient.get('/disco/');
-  const list = response?.data?.disko || response?.data?.disco || response?.data?.list || [];
-  _discoCache = Array.isArray(list) ? list : [];
+
+  // Start from the documented list so ids/names are correct even if the live
+  // endpoint is down or returns a mismatched/empty list.
+  const merged = [...DISCO_LIST];
+  try {
+    const response = await apiClient.get('/disco/');
+    const live = response?.data?.disko || response?.data?.disco || response?.data?.list || [];
+    if (Array.isArray(live)) {
+      for (const item of live) {
+        const id = item?.disco_id ?? item?.id ?? item?.plan_id;
+        if (id === undefined || id === null) continue;
+        const numId = Number(id);
+        if (Number.isNaN(numId)) continue;
+        // Only add DISCOs that are NOT already in the documented list —
+        // the documented disco_id/name always wins over the live endpoint.
+        if (merged.some((d) => Number(d.disco_id) === numId)) continue;
+        merged.push({
+          disco_id: numId,
+          name: item?.disco_name || item?.name || item?.disco || item?.disconame || String(numId),
+        });
+      }
+    }
+  } catch (err) {
+    // Live endpoint unavailable — the documented list is authoritative anyway.
+    console.warn(`[gladtidingsProvider] /disco/ fetch failed — using documented DISCO list. ${err.message}`);
+  }
+
+  _discoCache = merged;
   return _discoCache;
 }
 
