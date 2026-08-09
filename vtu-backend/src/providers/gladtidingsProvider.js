@@ -281,7 +281,7 @@ const ELECTRICITY_NAME_TO_ID = {
 // Gladtidings DISCO list — disco_id ⇄ disco name (from Gladtidings docs)
 // ---------------------------------------------------------------------------
 // Documented Gladtidings electricity DISCOs. These numeric disco_id values are
-// what the /v2/validatemeter/ and /v2/billpayment/ endpoints expect, so this
+// what the /v2/validatemeter/ and /billpayment/ endpoints expect, so this
 // list is the authoritative source for plan syncing, meter verification and
 // purchase.
 //
@@ -386,7 +386,7 @@ async function getElectricityPlansRaw() {
 // disco_id/name is never overridden. The app may send a disco as a numeric id,
 // a slug ('ikeja-electric'), or a name ('Ikeja Electric'); resolve it to the
 // numeric disco_id required by the provider's /v2/validatemeter/ and
-// /v2/billpayment/ endpoints.
+// /billpayment/ endpoints.
 let _discoCache = null;
 
 async function _fetchDiscoList() {
@@ -524,6 +524,12 @@ async function purchaseElectricity({ meter, plan, amount, phone, type = 'prepaid
     //                        `meter_type` field is for /v2/validatemeter/ only and
     //                        makes /billpayment/ return an empty HTTP 500)
     //   Customer_Phone    -> required customer phone number
+    //
+    // NOTE: use `POST /billpayment/` (NO `/v2/` prefix). The `/v2/billpayment/`
+    // endpoint exists but does not recognise any DISCO and always returns the
+    // HTTP 400 "Disco provider not found!" for every disco identifier format.
+    // `/billpayment/` is a DRF endpoint that validates `disco_name` as a numeric
+    // primary key, confirming both the URL and the payload above are correct.
     //   customer_name / customer_address -> optional, taken from meter verification
     const meterType = type === 'postpaid' ? 'Postpaid' : 'Prepaid';
     const payload = {
@@ -540,13 +546,13 @@ async function purchaseElectricity({ meter, plan, amount, phone, type = 'prepaid
     // DEBUG LOGGING: capture the exact payload + resolved disco_id sent, so a
     // plan-code/disco mismatch between the active provider and a synced plan is
     // visible (e.g. using gladtidings' id against geodnatech-synced plans).
-    console.log('[gladtidingsProvider] Electricity purchase request -> POST /v2/billpayment/', {
+    console.log('[gladtidingsProvider] Electricity purchase request -> POST /billpayment/', {
       ...payload,
       meter_number: maskMeter(meter),
       rawPlan: plan,
     });
 
-    const response = await apiClient.post('/v2/billpayment/', payload);
+    const response = await apiClient.post('/billpayment/', payload);
     const data = response.data;
 
     // DEBUG LOGGING: always dump the raw provider response so we can see the

@@ -332,15 +332,44 @@ const ELECTRICITY_NAME_TO_ID = {
   'benin': 'benin-electric',
 };
 
+// ---------------------------------------------------------------------------
+// DataStation DISCO list — disco_id ⇄ disco name (from DataStation docs)
+// ---------------------------------------------------------------------------
+// Documented DataStation electricity DISCOs. These numeric disco_id values are
+// what the /validatemeter/ and /billpayment/ endpoints expect, so this list is
+// the authoritative source for plan syncing, meter verification and purchase.
+//
+//   (1)  1 = Ikeja Electric            (7)  7 = Ibadan Electric
+//   (2)  2 = Eko Electric              (8)  8 = Kaduna Electric
+//   (3)  3 = Abuja Electric            (9)  9 = Jos Electric
+//   (4)  4 = Kano Electric            (10) 10 = Benin Electric
+//   (5)  5 = Enugu Electric           (11) 11 = Yola Electric
+//   (6)  6 = Port Harcourt Electric
+const DISCO_LIST = [
+  { disco_id: 1, name: 'Ikeja Electric' },
+  { disco_id: 2, name: 'Eko Electric' },
+  { disco_id: 3, name: 'Abuja Electric' },
+  { disco_id: 4, name: 'Kano Electric' },
+  { disco_id: 5, name: 'Enugu Electric' },
+  { disco_id: 6, name: 'Port Harcourt Electric' },
+  { disco_id: 7, name: 'Ibadan Electric' },
+  { disco_id: 8, name: 'Kaduna Electric' },
+  { disco_id: 9, name: 'Jos Electric' },
+  { disco_id: 10, name: 'Benin Electric' },
+  { disco_id: 11, name: 'Yola Electric' },
+];
+
 /**
- * Build electricity plans from the provider's /disco/ endpoint.
- * Each DISCO is returned as { id (numeric disco_id), name } and normalized to
- * { plans: [...] } with the numeric disco_id as plan_code.
+ * Build electricity plans for DataStation.
+ * The DISCO list comes from _fetchDiscoList(), which uses the documented
+ * DataStation disco IDs/names (DISCO_LIST, e.g. 1=Ikeja Electric, 11=Yola
+ * Electric) and supplements them with the live /disco/ endpoint.
+ * Each DISCO is normalized to { plans: [...] } with the numeric disco_id as plan_code.
  */
 async function getElectricityPlans() {
   try {
-    // Build the DISCO list from the provider's /disco/ endpoint, which returns
-    // each DISCO as { id (numeric disco_id), name }.
+    // Build the DISCO list from _fetchDiscoList(), which starts from the
+    // documented DataStation disco IDs/names and supplements with the live /disco/ endpoint.
     const electricityList = await _fetchDiscoList();
 
     const plans = [];
@@ -403,17 +432,45 @@ async function getElectricityPlansRaw() {
 // ---------------------------------------------------------------------------
 // Electricity DISCO id resolution
 // ---------------------------------------------------------------------------
-// The provider exposes the DISCO list (numeric disco_id + name) at GET /disco/.
-// The app may send a disco as a numeric id, a slug ('ikeja-electric'), or a
-// name ('Ikeja Electric'). Resolve it to the numeric disco_id required by the
-// provider's /validatemeter/ and /billpayment/ endpoints.
+// The documented DISCO list (DISCO_LIST above) is authoritative — it matches
+// the DataStation docs (1=Ikeja … 11=Yola). The live /disco/ endpoint is still
+// consulted so any DISCO DataStation adds later is merged in, but a documented
+// disco_id/name is never overridden. The app may send a disco as a numeric id,
+// a slug ('ikeja-electric'), or a name ('Ikeja Electric'); resolve it to the
+// numeric disco_id required by the provider's /validatemeter/ and /billpayment/
+// endpoints.
 let _discoCache = null;
 
 async function _fetchDiscoList() {
   if (_discoCache) return _discoCache;
-  const response = await apiClient.get('/disco/');
-  const list = response?.data?.disko || response?.data?.disco || response?.data?.list || [];
-  _discoCache = Array.isArray(list) ? list : [];
+
+  // Start from the documented list so ids/names are correct even if the live
+  // endpoint is down or returns a mismatched/empty list.
+  const merged = [...DISCO_LIST];
+  try {
+    const response = await apiClient.get('/disco/');
+    const live = response?.data?.disko || response?.data?.disco || response?.data?.list || [];
+    if (Array.isArray(live)) {
+      for (const item of live) {
+        const id = item?.disco_id ?? item?.id ?? item?.plan_id;
+        if (id === undefined || id === null) continue;
+        const numId = Number(id);
+        if (Number.isNaN(numId)) continue;
+        // Only add DISCOs that are NOT already in the documented list —
+        // the documented disco_id/name always wins over the live endpoint.
+        if (merged.some((d) => Number(d.disco_id) === numId)) continue;
+        merged.push({
+          disco_id: numId,
+          name: item?.disco_name || item?.name || item?.disco || item?.disconame || String(numId),
+        });
+      }
+    }
+  } catch (err) {
+    // Live endpoint unavailable — the documented list is authoritative anyway.
+    console.warn(`[datastationProvider] /disco/ fetch failed — using documented DISCO list. ${err.message}`);
+  }
+
+  _discoCache = merged;
   return _discoCache;
 }
 
