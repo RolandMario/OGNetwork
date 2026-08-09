@@ -508,19 +508,33 @@ async function verifyMeter({ meter, plan, type = 'prepaid' }) {
   }
 }
 
-async function purchaseElectricity({ meter, plan, amount, phone, type = 'prepaid' }) {
+async function purchaseElectricity({ meter, plan, amount, phone, type = 'prepaid', customerName, customerAddress }) {
   if (!meter || !plan || !amount || !phone) {
     throw new Error('[gladtidings] purchaseElectricity: meter, plan, amount and phone are required.');
   }
 
   try {
     const disco_id = await _resolveDiscoId(plan);
-    // Gladtidings' /v2/billpayment/ expects the meter type in camelCase `MeterType`
-    // with TITLE-CASED values ('Prepaid'|'Postpaid'). The lowercase `meter_type`
-    // field (used by geodnatech/datastation) is ignored here and causes the
-    // provider to return an empty HTTP 500.
+    // Per the Gladtidings docs (POST /api/billpayment/), the electricity purchase
+    // payload must use these exact field names:
+    //   disco_name        -> the numeric disco_id (NOT `disco_id`)
+    //   amount            -> purchase amount in naira
+    //   meter_number      -> the meter / account number
+    //   MeterType         -> 'Prepaid' | 'Postpaid' (camelCase; the lowercase
+    //                        `meter_type` field is for /v2/validatemeter/ only and
+    //                        makes /billpayment/ return an empty HTTP 500)
+    //   Customer_Phone    -> required customer phone number
+    //   customer_name / customer_address -> optional, taken from meter verification
     const meterType = type === 'postpaid' ? 'Postpaid' : 'Prepaid';
-    const payload = { disco_id, amount: Number(amount), meter_number: meter, MeterType: meterType };
+    const payload = {
+      disco_name: disco_id,
+      amount: Number(amount),
+      meter_number: meter,
+      MeterType: meterType,
+      Customer_Phone: phone,
+      ...(customerName ? { customer_name: customerName } : {}),
+      ...(customerAddress ? { customer_address: customerAddress } : {}),
+    };
     const maskMeter = (m) => (typeof m === 'string' && m.length > 6 ? `${m.slice(0, 3)}****${m.slice(-3)}` : m);
 
     // DEBUG LOGGING: capture the exact payload + resolved disco_id sent, so a
