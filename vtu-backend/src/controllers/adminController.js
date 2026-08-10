@@ -4,6 +4,7 @@
 
 const adminService = require('../services/adminService');
 const providerRegistry = require('../services/providerRegistry');
+const notificationService = require('../services/notificationService');
 
 // ---------------------------------------------------------------------------
 // Dashboard
@@ -1258,6 +1259,147 @@ exports.approveManualFunding = async (req, res) => {
     });
   } catch (error) {
     console.error('[adminController.approveManualFunding] error:', error.message);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Notifications — admin broadcast
+// ---------------------------------------------------------------------------
+
+/**
+ * @desc    Send a notification to all active users (or a single user)
+ * @route   POST /api/v1/admin/notifications
+ * @access  Private, Admin only
+ * @body    { title, body, audience: 'all'|'user', userId? }
+ */
+exports.sendNotification = async (req, res) => {
+  try {
+    const { title, body, audience = 'all', userId } = req.body;
+    const Notification = req.models.Notification;
+    const User = req.models.User;
+
+    if (!Notification) {
+      return res.status(500).json({ status: 'error', message: 'Notification model not available.' });
+    }
+    if (!title || !String(title).trim() || !body || !String(body).trim()) {
+      return res.status(400).json({ status: 'fail', message: 'title and body are required.' });
+    }
+    if (!['all', 'user'].includes(audience)) {
+      return res.status(400).json({ status: 'fail', message: 'audience must be "all" or "user".' });
+    }
+
+    // Determine recipients
+    let recipients = [];
+    if (audience === 'user') {
+      if (!userId) {
+        return res.status(400).json({ status: 'fail', message: 'userId is required when audience is "user".' });
+      }
+      const user = await User.findOne({ _id: userId, isActive: true }).select('_id').lean();
+      if (!user) {
+        return res.status(404).json({ status: 'fail', message: 'User not found.' });
+      }
+      recipients = [user._id];
+    } else {
+      const users = await User.find({ role: 'user', isActive: true }).select('_id').lean();
+      recipients = users.map((u) => u._id);
+    }
+
+    if (recipients.length === 0) {
+      return res.status(400).json({ status: 'fail', message: 'No active recipients to notify.' });
+    }
+
+    const broadId = `${Date.now()}-${Math.random().toString(36).substring(2, 10)}`;
+
+    // Fan-out: one Notification doc per recipient (chunked insert)
+    const cleanTitle = String(title).trim();
+    const cleanBody = String(body).trim();
+    const docs = recipients.map((uid) => ({
+      user: uid,
+      broadId,
+      title: cleanTitle,
+      body: cleanBody,
+      type: 'announcement',
+      audience,
+    }));
+
+    const CHUNK = 500;
+    for (let i = 0; i < docs.length; i += CHUNK) {
+      await Notification.insertMany(docs.slice(i, i + CHUNK));
+    }
+
+    // Best-effort device push to each recipient
+    let pushDelivered = 0;
+    for (const uid of recipients) {
+      try {
+        const result = await notificationService.sendPushNotification(uid, {
+          title: cleanTitle,
+          body: cleanBody,
+          data: { type: 'announcement', broadId },
+        });
+        if (result.sent) pushDelivered++;
+      } catch (err) {
+        console.error(`[adminController.sendNotification] push failed for ${uid}:`, err.message);
+      }
+    }
+
+    res.status(201).json({
+      status: 'success',
+      message: `Notification sent to ${recipients.length} user(s).`,
+      data: { broadId, recipients: recipients.length, pushDelivered },
+    });
+  } catch (error) {
+    console.error('[adminController.sendNotification] error:', error.message);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+/**
+ * @desc    Get broadcast history (one row per broadcast)
+ * @route   GET /api/v1/admin/notifications?page=1&limit=20
+ * @access  Private, Admin only
+ */
+exports.getSentNotifications = async (req, res) => {
+  try {
+    const Notification = req.models.Notification;
+    const { page = 1, limit = 20 } = req.query;
+
+    if (!Notification) {
+      return res.status(500).json({ status: 'error', message: 'Notification model not available.' });
+    }
+
+    const items = await Notification.aggregate([
+      { $sort: { createdAt: -1 } },
+      {
+        $group: {
+          _id: '$broadId',
+          title: { $first: '$title' },
+          body: { $first: '$body' },
+          type: { $first: '$type' },
+          audience: { $first: '$audience' },
+          recipients: { $sum: 1 },
+          sentAt: { $max: '$createdAt' },
+        },
+      },
+      { $sort: { sentAt: -1 } },
+      { $skip: (Number(page) - 1) * Number(limit) },
+      { $limit: Math.min(Number(limit), 100) },
+    ]);
+
+    const broads = await Notification.distinct('broadId');
+    const total = broads.length;
+
+    res.status(200).json({
+      status: 'success',
+      data: {
+        notifications: items,
+        total,
+        page: Number(page),
+        pages: Math.ceil(total / Number(limit)) || 1,
+      },
+    });
+  } catch (error) {
+    console.error('[adminController.getSentNotifications] error:', error.message);
     res.status(500).json({ status: 'error', message: error.message });
   }
 };

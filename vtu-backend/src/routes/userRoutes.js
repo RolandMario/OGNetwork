@@ -50,4 +50,12 @@ router.post('/notifications/register',   notificationController.registerToken);
 router.post('/notifications/unregister', notificationController.unregisterToken);
 router.post('/notifications/test',       notificationController.sendTestNotification);
 
+// ---------------------------------------------------------------------------
+// In-app Notifications (inbox)
+// ---------------------------------------------------------------------------
+router.get('/notifications',                notificationController.getMyNotifications);
+router.get('/notifications/unread-count',   notificationController.getUnreadCount);
+router.patch('/notifications/read-all',     notificationController.markAllRead);
+router.patch('/notifications/:id/read',     notificationController.markNotificationRead);
+
 module.exports = router;

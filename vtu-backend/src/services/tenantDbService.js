@@ -11,6 +11,7 @@ const { schema: WalletSchema,      modelName: WalletModelName      } = require('
 const { schema: TransactionSchema, modelName: TransactionModelName } = require('../models/Transaction');
 const { schema: ServicePlan,       modelName: ServiceModeName      } = require('../models/ServicePlan');
 const { schema: AdminConfigSchema, modelName: AdminConfigModelName } = require('../models/AdminConfig');
+const { schema: NotificationSchema, modelName: NotificationModelName } = require('../models/Notification');
 
 // All tenant-scoped models — add new models here as the project grows
 const TENANT_MODELS = [
@@ -19,6 +20,7 @@ const TENANT_MODELS = [
   { schema: TransactionSchema, modelName: TransactionModelName },
   { schema: ServicePlan,       modelName: ServiceModeName      },
   { schema: AdminConfigSchema, modelName: AdminConfigModelName },
+  { schema: NotificationSchema, modelName: NotificationModelName },
 ];
 
 // In-memory connection pool: { [tenantId]: mongoose.Connection }

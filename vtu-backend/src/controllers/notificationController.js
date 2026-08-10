@@ -83,3 +83,135 @@ exports.sendTestNotification = async (req, res) => {
     res.status(500).json({ status: 'error', message: error.message });
   }
 };
+
+// ---------------------------------------------------------------------------
+// In-app notification inbox
+// ---------------------------------------------------------------------------
+
+/**
+ * @desc    Get current user's notifications (newest first)
+ * @route   GET /api/v1/user/notifications?page=1&limit=20
+ * @access  Private
+ */
+exports.getMyNotifications = async (req, res) => {
+  try {
+    const Notification = req.models.Notification;
+    const { page = 1, limit = 20 } = req.query;
+
+    if (!Notification) {
+      return res.status(500).json({ status: 'error', message: 'Notification model not available.' });
+    }
+
+    const notifications = await Notification.find({ user: req.user.id })
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * Number(limit))
+      .limit(Math.min(Number(limit), 100))
+      .lean();
+
+    const [total, unread] = await Promise.all([
+      Notification.countDocuments({ user: req.user.id }),
+      Notification.countDocuments({ user: req.user.id, readAt: null }),
+    ]);
+
+    res.status(200).json({
+      status: 'success',
+      data: {
+        notifications,
+        total,
+        unread,
+        page: Number(page),
+        pages: Math.ceil(total / Number(limit)) || 1,
+      },
+    });
+  } catch (error) {
+    console.error('[Notification] getMyNotifications error:', error.message);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+/**
+ * @desc    Get unread notification count (drives the bell badge)
+ * @route   GET /api/v1/user/notifications/unread-count
+ * @access  Private
+ */
+exports.getUnreadCount = async (req, res) => {
+  try {
+    const Notification = req.models.Notification;
+
+    if (!Notification) {
+      return res.status(500).json({ status: 'error', message: 'Notification model not available.' });
+    }
+
+    const count = await Notification.countDocuments({ user: req.user.id, readAt: null });
+
+    res.status(200).json({
+      status: 'success',
+      data: { count },
+    });
+  } catch (error) {
+    console.error('[Notification] getUnreadCount error:', error.message);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+/**
+ * @desc    Mark a single notification as read (owner only)
+ * @route   PATCH /api/v1/user/notifications/:id/read
+ * @access  Private
+ */
+exports.markNotificationRead = async (req, res) => {
+  try {
+    const Notification = req.models.Notification;
+    const { id } = req.params;
+
+    if (!Notification) {
+      return res.status(500).json({ status: 'error', message: 'Notification model not available.' });
+    }
+
+    const result = await Notification.updateOne(
+      { _id: id, user: req.user.id, readAt: null },
+      { $set: { readAt: new Date() } }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ status: 'fail', message: 'Notification not found.' });
+    }
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Notification marked as read.',
+    });
+  } catch (error) {
+    console.error('[Notification] markNotificationRead error:', error.message);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+/**
+ * @desc    Mark ALL notifications as read for the current user
+ * @route   PATCH /api/v1/user/notifications/read-all
+ * @access  Private
+ */
+exports.markAllRead = async (req, res) => {
+  try {
+    const Notification = req.models.Notification;
+
+    if (!Notification) {
+      return res.status(500).json({ status: 'error', message: 'Notification model not available.' });
+    }
+
+    const result = await Notification.updateMany(
+      { user: req.user.id, readAt: null },
+      { $set: { readAt: new Date() } }
+    );
+
+    res.status(200).json({
+      status: 'success',
+      message: 'All notifications marked as read.',
+      data: { modifiedCount: result.modifiedCount },
+    });
+  } catch (error) {
+    console.error('[Notification] markAllRead error:', error.message);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};

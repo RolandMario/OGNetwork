@@ -123,4 +123,14 @@ router.get('/transactions/manual-funding', adminController.getPendingManualFundi
 // Approve a manual funding transaction (credit wallet)
 router.post('/wallets/approve-manual-funding', adminController.approveManualFunding);
 
+// ---------------------------------------------------------------------------
+// Notifications (admin broadcast)
+// ---------------------------------------------------------------------------
+
+// Send a notification to all users (or a specific user)
+router.post('/notifications', adminController.sendNotification);
+
+// Broadcast history (one row per send)
+router.get('/notifications', adminController.getSentNotifications);
+
 module.exports = router;

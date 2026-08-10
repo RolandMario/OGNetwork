@@ -27,6 +27,12 @@ export const API_ROUTES = {
     MANUAL_TRANSFER_ACCOUNTS: '/user/wallet/manual-transfer-accounts',
     MANUAL_TRANSFER_NOTIFY:   '/user/wallet/manual-transfer-notify',
   },
+  NOTIFICATIONS: {
+    LIST:             '/user/notifications',
+    UNREAD_COUNT:     '/user/notifications/unread-count',
+    MARK_ALL_READ:    '/user/notifications/read-all',
+    MARK_READ:        (id) => `/user/notifications/${id}/read`,
+  },
   VTU: {
     // DB plans endpoint — returns ourPrice for all services
     PLANS: '/vtu/plans',

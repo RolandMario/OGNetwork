@@ -5,11 +5,17 @@
 const userSchema = require('./User').schema; // Assuming User.js exports { schema: UserSchema }
 const walletSchema = require('./Wallet').schema;
 const transactionSchema = require('./Transaction').schema;
+const servicePlanSchema = require('./ServicePlan').schema;
+const adminConfigSchema = require('./AdminConfig').schema;
+const notificationSchema = require('./Notification').schema;
 // Add other schemas here...
 
 module.exports = {
     User: userSchema,
     Wallet: walletSchema,
     Transaction: transactionSchema,
+    ServicePlan: servicePlanSchema,
+    AdminConfig: adminConfigSchema,
+    Notification: notificationSchema,
     // Add others...
 };

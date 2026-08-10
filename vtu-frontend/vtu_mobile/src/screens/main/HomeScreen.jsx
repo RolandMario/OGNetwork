@@ -33,6 +33,8 @@ const HomeScreen = ({ navigation }) => {
 
   const [refreshing, setRefreshing]           = useState(false);
   const [recentTransactions, setRecentTransactions] = useState([]);
+  // Unread notification count — drives the bell badge
+  const [unreadCount, setUnreadCount] = useState(0);
 
   const appState = useRef(AppState.currentState);
 
@@ -65,13 +67,28 @@ const HomeScreen = ({ navigation }) => {
 }, [dispatch]);
 
   // ---------------------------------------------------------------------------
+  // Fetch unread notification count (bell badge)
+  // ---------------------------------------------------------------------------
+  const fetchUnreadCount = useCallback(async () => {
+    try {
+      const response = await apiClient.get(API_ROUTES.NOTIFICATIONS.UNREAD_COUNT);
+      if (response.data?.status === 'success') {
+        setUnreadCount(Number(response.data.data?.count || 0));
+      }
+    } catch (error) {
+      console.error('[HomeScreen] fetchUnreadCount error:', error.message);
+    }
+  }, []);
+
+  // ---------------------------------------------------------------------------
   // 1. Fetch on screen focus — fires every time user navigates back to HomeScreen
   //    This is the key trigger after FundWallet completes.
   // ---------------------------------------------------------------------------
   useFocusEffect(
     useCallback(() => {
       fetchWalletData();
-    }, [fetchWalletData])
+      fetchUnreadCount();
+    }, [fetchWalletData, fetchUnreadCount])
   );
 
   // ---------------------------------------------------------------------------
@@ -86,12 +103,13 @@ const HomeScreen = ({ navigation }) => {
       ) {
         console.log('[HomeScreen] App foregrounded — refreshing wallet.');
         fetchWalletData();
+        fetchUnreadCount();
       }
       appState.current = nextState;
     });
 
     return () => subscription.remove();
-  }, [fetchWalletData]);
+  }, [fetchWalletData, fetchUnreadCount]);
 
   // ---------------------------------------------------------------------------
   // 3. Pull-to-refresh
@@ -183,9 +201,16 @@ const HomeScreen = ({ navigation }) => {
             {userProfile?.fullName?.split(' ')[0] ?? 'User'}
           </Text>
         </View>
-        <TouchableOpacity style={styles.notificationBtn}>
+        <TouchableOpacity
+          style={styles.notificationBtn}
+          onPress={() => navigation.navigate('Notifications')}
+        >
           <Ionicons name="notifications-outline" size={24} color={COLORS.textWhite} />
-          <View style={styles.redDot} />
+          {unreadCount > 0 && (
+            <View style={styles.redDot}>
+              <Text style={styles.redDotText}>{unreadCount > 9 ? '9+' : unreadCount}</Text>
+            </View>
+          )}
         </TouchableOpacity>
       </View>
 
@@ -268,7 +293,8 @@ const styles = StyleSheet.create({
   greetingText:     { ...FONTS.regular, fontSize: SIZES.body2, color: 'rgba(255,255,255,0.8)' },
   userNameText:     { ...FONTS.bold, fontSize: SIZES.h2, color: COLORS.textWhite },
   notificationBtn:  { padding: 8, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 50 },
-  redDot:           { position: 'absolute', top: 8, right: 8, width: 8, height: 8, borderRadius: 4, backgroundColor: COLORS.error },
+  redDot:           { position: 'absolute', top: 2, right: 2, minWidth: 18, height: 18, paddingHorizontal: 4, borderRadius: 9, backgroundColor: COLORS.error, justifyContent: 'center', alignItems: 'center', borderWidth: 1.5, borderColor: COLORS.primary },
+  redDotText:       { color: '#FFF', fontSize: 10, fontWeight: 'bold', lineHeight: 12 },
   walletWrapper:    { marginTop: -20 },
   walletCard:       { backgroundColor: COLORS.primary, borderRadius: 20, padding: 24, ...SHADOWS.medium, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.2)' },
   walletLabel:      { ...FONTS.bold, color: COLORS.textWhite, marginBottom: 5 },
