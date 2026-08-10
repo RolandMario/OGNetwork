@@ -1,31 +1,36 @@
 {
   "expo": {
-    "name": "vtu_mobile",
-    "slug": "vtu_mobile",
+    "name": "ognetwork",
+    "slug": "ognetwork",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/adaptive.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/splash-icon.png",
+      "image": "./assets/adaptive.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.rolandmario.vtu-mobile"
+      "bundleIdentifier": "com.ognetwork.app"
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
+        "foregroundImage": "./assets/adaptive.png",
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.rolandmario.vtu_mobile"
+      "package": "com.ognetwork.app"
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "d3edbebe-6ff5-4e79-b163-0083763ae150"
+      }
     }
   }
 }

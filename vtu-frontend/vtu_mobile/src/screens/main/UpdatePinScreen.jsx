@@ -2,10 +2,10 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, SafeAreaView, TouchableOpacity, Alert, ActivityIndicator, Vibration } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import axios from 'axios';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { COLORS, SIZES, FONTS } from '../../constants/theme';
 import CustomButton from '../../components/CustomButton';
 import { API_BASE_URL } from '../../constants/apiConfig';
+import { getSession } from '../../services/session';
 
 const UpdatePinScreen = ({ navigation }) => {
   const [step, setStep] = useState(1); // 1: Old PIN, 2: New PIN, 3: Confirm
@@ -28,8 +28,7 @@ const handleComplete = async () => {
 
     setLoading(true);
     try {
-      const token = await AsyncStorage.getItem('token');
-      const tenantId = await AsyncStorage.getItem('tenantId');
+      const { token, tenantId } = getSession();
       
       // 2. Call the backend
       const response = await axios.patch(

@@ -19,14 +19,16 @@ import { useFocusEffect } from '@react-navigation/native';
 import { COLORS, SIZES, FONTS, SHADOWS } from '../../constants/theme';
 import apiClient from '../../services/api';
 import { API_ROUTES } from '../../constants/apiRoutes';
-import { logout } from '../../redux/slices/authSlice';
+import { logout as reduxLogout } from '../../redux/slices/authSlice';
 import { fetchBalanceSuccess } from '../../redux/slices/walletSlice';
+import { useUser } from '../../context/userContext';
 
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 const ProfileScreen = ({ navigation }) => {
   const dispatch = useDispatch();
+  const { logout: contextLogout } = useUser();
   const walletBalance = useSelector((state) => state.wallet.balance);
 
   const [user,        setUser]        = useState(null);
@@ -82,10 +84,16 @@ const ProfileScreen = ({ navigation }) => {
         text: 'Logout',
         style: 'destructive',
         onPress: async () => {
-          // FIX: clear the correct AsyncStorage keys used by apiClient interceptor
-          await AsyncStorage.multiRemove(['token', 'tenantId', 'pendingTransactionRef']);
-          dispatch(logout());
-          navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
+          try {
+            // End the in-memory session
+            await contextLogout();
+            // Clear any pending (unverified) funding reference
+            await AsyncStorage.removeItem('pendingTransactionRef');
+            dispatch(reduxLogout());
+            navigation.reset({ index: 0, routes: [{ name: 'Login' }] });
+          } catch (err) {
+            console.error('[Profile] Logout error:', err);
+          }
         },
       },
     ]);

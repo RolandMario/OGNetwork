@@ -27,9 +27,9 @@ const MainNavigator = () => {
         // --- 2. Bar Style (The container) ---
         tabBarStyle: {
           backgroundColor: COLORS.surfaceWhite,
-          height: Platform.OS === 'ios' ? 85 : 70, // Taller for modern look
+          height: Platform.OS === 'ios' ? 120 : 120, // Taller for modern look
           paddingBottom: Platform.OS === 'ios' ? 25 : 10,
-          paddingTop: 10,
+          paddingTop: 0,
           borderTopWidth: 0, // Remove default ugly line
           elevation: 10, // Android shadow
           shadowColor: '#000', // iOS Shadow
@@ -58,7 +58,7 @@ const MainNavigator = () => {
 
           // Return the icon component
           return (
-            <View style={{ alignItems: 'center', justifyContent: 'center', top: 3 }}>
+            <View style={{ alignItems: 'center', justifyContent: 'center', top: 1 }}>
               <Ionicons name={iconName} size={24} color={color} />
               {/* Optional: Add a small dot if focused for extra style
               {focused && (

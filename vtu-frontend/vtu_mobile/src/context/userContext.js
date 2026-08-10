@@ -1,7 +1,7 @@
 import React, { createContext, useState, useContext, useCallback } from 'react';
 import axios from 'axios';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API_BASE_URL } from '../constants/apiConfig';
+import { setSession, clearSession } from '../services/session';
 
 // 1. Define the Context
 export const UserContext = createContext(null);
@@ -26,9 +26,9 @@ export const UserProvider = ({ children }) => {
     setTenantId(id);
     setUserProfile(user);
     setWallet(wallet);
-    // await AsyncStorage.setItem('user', user)
-    await AsyncStorage.setItem('token', token);
-    await AsyncStorage.setItem('tenantId', id);
+    // Session is held in-memory only — never persisted to disk. This is what
+    // makes the app require a fresh login every time it is opened.
+    setSession(token, id);
     setIsLoading(false);
   }, []);
 
@@ -80,8 +80,7 @@ export const UserProvider = ({ children }) => {
     setTenantId(null);
     setUserProfile(null);
     setWallet(null);
-    await AsyncStorage.removeItem('token');
-    await AsyncStorage.removeItem('tenantId');
+    clearSession();
   }, []);
   
   /**

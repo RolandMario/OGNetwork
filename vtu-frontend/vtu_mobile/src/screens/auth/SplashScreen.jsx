@@ -7,15 +7,17 @@ import {
   StatusBar,
   Image,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+
 import { COLORS, FONTS } from '../../constants/theme';
 
 // ---------------------------------------------------------------------------
 // SplashScreen
 //
 // Logo starts large (zoomed in) and scales DOWN to its normal size,
-// with a fade-in, then navigates to Login or MainNavigator depending
-// on whether a token is stored.
+// with a fade-in, then always requests a fresh login.
+//
+// Sessions NEVER survive an app close: credentials are kept in memory only
+// (services/session.js), so every open starts from the Login screen.
 //
 // If you have a logo image, place it at:
 //   src/assets/images/logo.png
@@ -50,25 +52,14 @@ const SplashScreen = ({ navigation }) => {
       useNativeDriver: true,
     }).start();
 
-    // 3. After the animation completes, check auth state and navigate
-    const timer = setTimeout(async () => {
-      try {
-        const token    = await AsyncStorage.getItem('token');
-        const tenantId = await AsyncStorage.getItem('tenantId');
-
-        if (token && tenantId) {
-          navigation.replace('MainNavigator');
-        } else {
-          navigation.replace('Login');
-        }
-      } catch (err) {
-        console.error('[Splash] Auth check error:', err.message);
-        navigation.replace('Login');
-      }
+    // 3. After the animation completes, request a fresh login.
+    //    (Sessions are never persisted, so the user must sign in again.)
+    const timer = setTimeout(() => {
+      navigation.replace('Login');
     }, 2200); // total splash duration
 
     return () => clearTimeout(timer);
-  }, []);
+  }, [navigation]);
 
   return (
     <View style={styles.container}>

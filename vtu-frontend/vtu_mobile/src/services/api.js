@@ -1,6 +1,6 @@
 import axios from 'axios';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API_ROOT } from '../constants/apiConfig';
+import { getSession, clearSession } from './session';
 
 export const apiClient = axios.create({
   baseURL: API_ROOT,
@@ -14,20 +14,17 @@ export const apiClient = axios.create({
 });
 
 // Request interceptor: Attach auth token and tenant ID
+// The session lives in-memory only (services/session.js) — the token is never
+// persisted to disk, so closing the app always requires a fresh login.
 apiClient.interceptors.request.use(
-  async (config) => {
-    try {
-      const token    = await AsyncStorage.getItem('token');      // FIX: was 'userToken'
-      const tenantId = await AsyncStorage.getItem('tenantId');
+  (config) => {
+    const { token, tenantId } = getSession();
 
-      if (token) {
-        config.headers.Authorization = `Bearer ${token}`;
-      }
-      if (tenantId) {
-        config.headers['x-tenant-id'] = tenantId;
-      }
-    } catch (error) {
-      console.error('[API] Request interceptor error:', error);
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    if (tenantId) {
+      config.headers['x-tenant-id'] = tenantId;
     }
     return config;
   },
@@ -37,10 +34,10 @@ apiClient.interceptors.request.use(
 // Response interceptor: Handle 401 (token expired/invalid)
 apiClient.interceptors.response.use(
   (response) => response,
-  async (error) => {
+  (error) => {
+    // Clear the in-memory session when the token is rejected/expired
     if (error.response?.status === 401) {
-      await AsyncStorage.removeItem('token');       // FIX: was 'userToken'
-      await AsyncStorage.removeItem('tenantId');
+      clearSession();
     }
     return Promise.reject(error);
   }

@@ -5,17 +5,27 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { Provider as ReduxProvider } from 'react-redux';
 import AppNavigator from './src/navigation/AppNavigator'
 import { UserProvider } from './src/context/userContext';
+import { navigationRef } from './src/navigation/navigationRef';
+import useAutoLogout from './src/hooks/useAutoLogout';
 import store from './src/redux/store';
 
 const Stack = createNativeStackNavigator();
+
+// Small helper so the auto-logout hook (which needs UserContext) can be
+// mounted inside <UserProvider>. It renders nothing.
+const AutoLogoutHandler = () => {
+  useAutoLogout();
+  return null;
+};
 
 const App = () => {
   return (
     <ReduxProvider store={store}>
       <UserProvider>
-        <NavigationContainer>
+        <AutoLogoutHandler />
+        <NavigationContainer ref={navigationRef}>
           <AppNavigator/>
-        </NavigationContainer>  
+        </NavigationContainer>
       </UserProvider>
     </ReduxProvider>
   );

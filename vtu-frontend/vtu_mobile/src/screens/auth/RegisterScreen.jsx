@@ -11,7 +11,6 @@ import {
   ScrollView,
   StatusBar,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useDispatch } from 'react-redux';
 
 import { COLORS, SIZES, FONTS, SHADOWS } from '../../constants/theme';
@@ -20,11 +19,13 @@ import CustomButton from '../../components/CustomButton';
 import apiClient from '../../services/api';
 import { API_ROUTES } from '../../constants/apiRoutes';
 import { loginSuccess } from '../../redux/slices/authSlice';
+import { useUser } from '../../context/userContext';
 
 const TENANT_ID = 'demo';
 
 const RegisterScreen = ({ navigation }) => {
   const dispatch = useDispatch();
+  const { login } = useUser();
 
   const [fullName,  setFullName]  = useState('');
   const [email,     setEmail]     = useState('');
@@ -51,9 +52,10 @@ const RegisterScreen = ({ navigation }) => {
       if (response.data.status === 'success') {
         const { token, data: { user } } = response.data;
 
-        // 1. Persist token and tenantId so interceptor picks them up
-        await AsyncStorage.setItem('token', token);
-        await AsyncStorage.setItem('tenantId', TENANT_ID);
+        // 1. Seed the in-memory session (context) so the apiClient
+        //    interceptor can authenticate the next calls. Nothing is
+        //    persisted to disk — the session dies with the app.
+        await login(token, user, null, TENANT_ID);
 
         // 2. Update Redux auth state
         dispatch(loginSuccess({ token, user, tenantId: TENANT_ID }));

@@ -12,13 +12,13 @@ import {
   ScrollView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { COLORS, SIZES, FONTS } from '../../constants/theme';
 import CustomInput from '../../components/CustomInput';
 import CustomButton from '../../components/CustomButton';
 import apiClient from '../../services/api';
 import { API_ROUTES } from '../../constants/apiRoutes';
+import { updateToken } from '../../services/session';
 
 const UpdatePasswordScreen = ({ navigation }) => {
   const [currentPassword, setCurrentPassword] = useState('');
@@ -57,9 +57,9 @@ const UpdatePasswordScreen = ({ navigation }) => {
       );
 
       if (response.data?.status === 'success') {
-        // Update the stored token since it was refreshed
+        // Update the in-memory session token since it was refreshed
         if (response.data?.token) {
-          await AsyncStorage.setItem('token', response.data.token);
+          updateToken(response.data.token);
         }
 
         Alert.alert(

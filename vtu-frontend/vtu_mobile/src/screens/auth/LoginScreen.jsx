@@ -14,7 +14,6 @@ import {
   ScrollView,
   StatusBar,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { COLORS, SIZES, FONTS, SHADOWS } from '../../constants/theme';
 import CustomInput from '../../components/CustomInput';
 import CustomButton from '../../components/CustomButton';
@@ -50,11 +49,8 @@ if (response.data.status === 'success') {
   const token = response.data.token;
   const user = response.data.data.user;
 
-  // Save to AsyncStorage — key must match api.js interceptor ('token')
-  await AsyncStorage.setItem('token', token);        // FIX: was 'userToken'
-  await AsyncStorage.setItem('tenantId', TENANT_ID);
-
-  // Update context
+  // Update context (keeps the session in-memory only — nothing is persisted,
+  // so the app requires a fresh login every time it is opened/closed).
   await login(token, user, null, TENANT_ID);
 
   // Dispatch to Redux

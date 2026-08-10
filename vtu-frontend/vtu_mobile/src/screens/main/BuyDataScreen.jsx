@@ -16,35 +16,109 @@ import { updateBalance } from '../../redux/slices/walletSlice';
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-const NETWORK_COLORS = {
-  mtn_gifting_data: '#FFCC00',
-  glo_data:         '#2ecc71',
-  airtel_data:      '#e74c3c',
-  '9mobile_data':   '#006633',
-  '9mobile_gifting':'#006633',
-  mtn_data_share:   '#FFAA00',
-};
 
-const NETWORK_LABELS = {
-  mtn_gifting_data: 'MTN',
-  glo_data:         'GLO',
-  airtel_data:      'Airtel',
-  '9mobile_data':   '9mobile',
-  '9mobile_gifting':'9mobile+',
-  mtn_data_share:   'MTN Share',
-};
+// The 4 canonical networks. Every provider identifier is normalized back to
+// one of these (e.g. mtn_gifting_data -> mtn, glo_data -> glo,
+// 9mobile_gifting -> 9mobile).
+const NETWORKS = [
+  { identifier: 'mtn',     label: 'MTN',     color: '#FFCC00' },
+  { identifier: 'airtel',  label: 'Airtel',  color: '#E60000' },
+  { identifier: 'glo',     label: 'GLO',     color: '#00C300' },
+  { identifier: '9mobile', label: '9mobile', color: '#006633' },
+];
 
-// Derive filter category from plan name
-function getPlanCategory(name = '') {
-  const l = name.toLowerCase();
-  if (l.includes('1day') || l.includes('1 day') || l.includes('2days') || l.includes('2 day')) return 'Daily';
-  if (l.includes('7day') || l.includes('7 day') || l.includes('weekly') || l.includes('week')) return 'Weekly';
-  if (l.includes('month') || l.includes('1month') || l.includes('30')) return 'Monthly';
-  if (l.includes('year') || l.includes('2 month')) return 'Long';
-  return 'Other';
+// Preferred ordering for the plan-type chips.
+const PLAN_TYPE_ORDER = ['Regular', 'Gifting', 'Corporate Gifting', 'Corporate', 'SME', 'Special', 'Data Share', 'Other'];
+
+// Map any provider identifier to its canonical network.
+function getNetworkFromProvider(provider = '') {
+  const p = String(provider).toLowerCase();
+  if (p.includes('mtn')) return 'mtn';
+  if (p.includes('airtel')) return 'airtel';
+  if (p.includes('glo')) return 'glo';
+  if (p.includes('9mobile') || p.includes('etisalat')) return '9mobile';
+  return 'other';
 }
 
-const FILTERS = ['All', 'Daily', 'Weekly', 'Monthly', 'Long', 'Other'];
+// Derive the plan type (Gifting, Corporate Gifting, SME, Special, Data Share,
+// Regular) from the provider identifier and the plan text returned by the API.
+function getPlanType(plan = {}) {
+  const provider = String(plan.provider || '').toLowerCase();
+  const hay = [
+    provider,
+    plan.metadata?.description,
+    plan.description,
+    plan.planName,
+    plan.metadata?.label,
+  ].filter(Boolean).join(' ').toLowerCase();
+
+  if (hay.includes('corporate') && (hay.includes('gifting') || hay.includes('gift'))) return 'Corporate Gifting';
+  if (hay.includes('corporate')) return 'Corporate';
+  if (hay.includes('gifting') || hay.includes('gift')) return 'Gifting';
+  if (hay.includes('sme')) return 'SME';
+  if (hay.includes('special')) return 'Special';
+  if (hay.includes('data share') || hay.includes('data_share') || hay.includes('share')) return 'Data Share';
+  return 'Regular';
+}
+
+// Extract the validity (in days) from a plan. Checks in order of authority:
+//  1. plan.metadata            (provider-reported, e.g. "GIFTING - 30")
+//  2. plan.description         (mirrors the metadata description)
+//  3. plan.planName            (display label, only explicit unit patterns)
+function getDurationDays(plan = {}) {
+  const meta     = plan.metadata || {};
+  const metaText = [meta.validity, meta.month_validate, meta.description]
+    .filter((v) => v != null && v !== '').join(' ').toLowerCase();
+  const descText = String(plan.description || '').toLowerCase();
+  const nameText = String(plan.planName || '').toLowerCase();
+
+  // Parse explicit units OR bare numbers (validity), skipping GB/MB sizes.
+  const parseText = (text) => {
+    const unitMatch = text.match(/(\d+(?:\.\d+)?)\s*(years?|yrs?|months?|weeks?|days?|day)/);
+    if (unitMatch) {
+      const value = parseFloat(unitMatch[1]);
+      const unit  = unitMatch[2];
+      if (unit[0] === 'y') return Math.round(value * 365);
+      if (unit.startsWith('month')) return Math.round(value * 30);
+      if (unit[0] === 'w') return Math.round(value * 7);
+      return Math.round(value);
+    }
+    const cleaned = text.replace(/\d+(?:\.\d+)?\s*(gb|mb|tb|kb)\b/g, ' ');
+    const nums = (cleaned.match(/\d+/g) || []).map(Number).filter((n) => n >= 1 && n <= 3650);
+    if (nums.length) return Math.max(...nums);
+    return null;
+  };
+
+  if (metaText.trim()) {
+    const fromMeta = parseText(metaText);
+    if (fromMeta != null) return fromMeta;
+  }
+  if (descText.trim()) {
+    const fromDesc = parseText(descText);
+    if (fromDesc != null) return fromDesc;
+  }
+
+  // Plan name only counts when it carries an explicit unit ("30 Days", "1 Month")
+  const nameUnit = nameText.match(/(\d+(?:\.\d+)?)\s*(years?|yrs?|months?|weeks?|days?|day)/);
+  if (nameUnit) {
+    const value = parseFloat(nameUnit[1]);
+    const unit  = nameUnit[2];
+    if (unit[0] === 'y') return Math.round(value * 365);
+    if (unit.startsWith('month')) return Math.round(value * 30);
+    if (unit[0] === 'w') return Math.round(value * 7);
+    return Math.round(value);
+  }
+
+  return null;
+}
+
+// Human-readable duration label (e.g. 7 -> "7 Days", 90 -> "3 Months").
+function getDurationLabel(days) {
+  if (days == null) return 'Duration varies';
+  if (days % 365 === 0 && days >= 365) return days === 365 ? '1 Year' : `${days / 365} Years`;
+  if (days % 30 === 0 && days >= 30) return days === 30 ? '1 Month' : `${days / 30} Months`;
+  return `${days} Day${days === 1 ? '' : 's'}`;
+}
 
 // ---------------------------------------------------------------------------
 // Component
@@ -54,13 +128,14 @@ const BuyDataScreen = ({ navigation }) => {
   const walletBalance = useSelector((state) => state.wallet.balance);
   const authUser      = useSelector((state) => state.auth.user);
 
-  // Networks are derived from plans — group by provider
-  const [networks,          setNetworks]          = useState([]);
-  const [selectedNetwork,   setSelectedNetwork]   = useState(null);
-  const [allPlans,          setAllPlans]          = useState([]);  // all plans from DB
+  // Networks are always the 4 canonical ones (MTN, Airtel, GLO, 9mobile).
+  // Plan types + durations are derived from the loaded plans.
+  const [selectedNetwork,   setSelectedNetwork]   = useState(NETWORKS[0].identifier);
+  const [selectedPlanType,  setSelectedPlanType]  = useState('All');   // plan type chips
+  const [selectedDuration,  setSelectedDuration]  = useState('All');   // duration chips
+  const [allPlans,          setAllPlans]          = useState([]);      // all data plans from DB
   const [selectedPlan,      setSelectedPlan]      = useState(null);
   const [phone,             setPhone]             = useState('');
-  const [selectedFilter,    setSelectedFilter]    = useState('All');
 
   const [loadingPlans,      setLoadingPlans]      = useState(true);
   const [isPinModalVisible, setIsPinModalVisible] = useState(false);
@@ -89,18 +164,12 @@ const BuyDataScreen = ({ navigation }) => {
         const plans = response.data?.data?.plans || [];
         setAllPlans(plans);
 
-        // Derive unique networks from plans
-        const seen = new Set();
-        const nets = [];
-        plans.forEach((p) => {
-          if (!seen.has(p.provider)) {
-            seen.add(p.provider);
-            nets.push({ identifier: p.provider });
-          }
-        });
-
-        setNetworks(nets);
-        if (nets.length) setSelectedNetwork(nets[0].identifier);
+        // Default to the first canonical network that actually has plans
+        // (fallback: MTN)
+        const firstNetworkWithPlans = NETWORKS.find((net) =>
+          plans.some((p) => getNetworkFromProvider(p.provider) === net.identifier)
+        );
+        setSelectedNetwork(firstNetworkWithPlans ? firstNetworkWithPlans.identifier : NETWORKS[0].identifier);
 
       } catch (err) {
         console.error('[BuyData] Failed to load plans:', err.message);
@@ -114,28 +183,79 @@ const BuyDataScreen = ({ navigation }) => {
   }, []);
 
   // ---------------------------------------------------------------------------
-  // Plans for selected network
+  // Plans for selected network (normalized to the 4 canonical networks)
   // ---------------------------------------------------------------------------
   const networkPlans = useMemo(() => {
     if (!selectedNetwork) return [];
-    return allPlans.filter((p) => p.provider === selectedNetwork);
+    return allPlans.filter((p) => getNetworkFromProvider(p.provider) === selectedNetwork);
   }, [allPlans, selectedNetwork]);
 
   // ---------------------------------------------------------------------------
-  // Filter by category
+  // Plan types available for the selected network (e.g. Gifting, SME, ...)
   // ---------------------------------------------------------------------------
-  const filteredPlans = useMemo(() => {
-    if (selectedFilter === 'All') return networkPlans;
-    return networkPlans.filter((p) => getPlanCategory(p.planName) === selectedFilter);
-  }, [networkPlans, selectedFilter]);
+  const planTypes = useMemo(() => {
+    const types = new Set(networkPlans.map((p) => getPlanType(p)));
+    return Array.from(types).sort(
+      (a, b) => PLAN_TYPE_ORDER.indexOf(a) - PLAN_TYPE_ORDER.indexOf(b)
+    );
+  }, [networkPlans]);
 
   // ---------------------------------------------------------------------------
-  // Network switch — reset plan selection
+  // Plans for the selected plan type
+  // ---------------------------------------------------------------------------
+  const typePlans = useMemo(() => {
+    if (!selectedPlanType || selectedPlanType === 'All') return networkPlans;
+    return networkPlans.filter((p) => getPlanType(p) === selectedPlanType);
+  }, [networkPlans, selectedPlanType]);
+
+  // ---------------------------------------------------------------------------
+  // Duration filters available for the current selection (sorted asc)
+  // ---------------------------------------------------------------------------
+  const durationFilters = useMemo(() => {
+    const byLabel = new Map(); // label -> days (for sorting)
+    typePlans.forEach((p) => {
+      const days  = getDurationDays(p);
+      const label = getDurationLabel(days);
+      if (!byLabel.has(label)) byLabel.set(label, days == null ? Infinity : days);
+    });
+    return Array.from(byLabel.entries())
+      .sort((a, b) => a[1] - b[1])
+      .map(([label]) => label);
+  }, [typePlans]);
+
+  // ---------------------------------------------------------------------------
+  // Filter by duration
+  // ---------------------------------------------------------------------------
+  const filteredPlans = useMemo(() => {
+    if (!selectedDuration || selectedDuration === 'All') return typePlans;
+    return typePlans.filter((p) => getDurationLabel(getDurationDays(p)) === selectedDuration);
+  }, [typePlans, selectedDuration]);
+
+  // ---------------------------------------------------------------------------
+  // Network switch — reset plan type/duration/plan selection
   // ---------------------------------------------------------------------------
   const handleNetworkChange = useCallback((identifier) => {
     setSelectedNetwork(identifier);
+    setSelectedPlanType('All');
+    setSelectedDuration('All');
     setSelectedPlan(null);
-    setSelectedFilter('All');
+  }, []);
+
+  // ---------------------------------------------------------------------------
+  // Plan type switch
+  // ---------------------------------------------------------------------------
+  const handlePlanTypeChange = useCallback((type) => {
+    setSelectedPlanType(type);
+    setSelectedDuration('All');
+    setSelectedPlan(null);
+  }, []);
+
+  // ---------------------------------------------------------------------------
+  // Duration filter switch
+  // ---------------------------------------------------------------------------
+  const handleDurationChange = useCallback((duration) => {
+    setSelectedDuration(duration);
+    setSelectedPlan(null);
   }, []);
 
   // ---------------------------------------------------------------------------
@@ -169,7 +289,10 @@ const BuyDataScreen = ({ navigation }) => {
     try {
       // FIX: no amount in body — backend looks up ourPrice from DB
       const response = await apiClient.post(API_ROUTES.VTU.BUY_DATA, {
-        network:       selectedNetwork,
+        // Send the plan's ACTUAL provider id (e.g. 'mtn_gifting_data') — the
+        // backend looks up the plan by its real provider + planCode, and hands
+        // it straight to the VTU provider for purchase.
+        network:       selectedPlan.provider,
         plan_code:     selectedPlan.planCode,   // FIX: DB field is planCode not plan_code
         mobile_number: phone,
         pin,
@@ -215,6 +338,7 @@ const BuyDataScreen = ({ navigation }) => {
   // ---------------------------------------------------------------------------
   const renderPlanCard = useCallback(({ item }) => {
     const isSelected = selectedPlan?.planCode === item.planCode;
+    const duration   = getDurationLabel(getDurationDays(item));
     return (
       <TouchableOpacity
         style={[styles.planCard, isSelected && styles.selectedCard]}
@@ -223,6 +347,9 @@ const BuyDataScreen = ({ navigation }) => {
       >
         <Text style={[styles.planLabel, isSelected && styles.selectedText]} numberOfLines={2}>
           {item.planName}
+        </Text>
+        <Text style={[styles.planDuration, isSelected && styles.selectedText]} numberOfLines={1}>
+          {duration}
         </Text>
         <Text style={[styles.planPrice, isSelected && styles.selectedPriceText]}>
           ₦{Number(item.ourPrice).toLocaleString()}
@@ -261,10 +388,9 @@ const BuyDataScreen = ({ navigation }) => {
             <ActivityIndicator color={COLORS.primary} style={{ marginVertical: 20 }} />
           ) : (
             <View style={styles.networkContainer}>
-              {networks.map((net) => {
+              {NETWORKS.map((net) => {
                 const isSelected = selectedNetwork === net.identifier;
-                const color      = NETWORK_COLORS[net.identifier] || '#888';
-                const label      = NETWORK_LABELS[net.identifier] || net.identifier;
+                const color      = net.color;
                 return (
                   <TouchableOpacity
                     key={net.identifier}
@@ -272,13 +398,35 @@ const BuyDataScreen = ({ navigation }) => {
                     onPress={() => handleNetworkChange(net.identifier)}
                   >
                     <View style={[styles.networkCircle, { backgroundColor: color }]}>
-                      <Text style={styles.networkInitial}>{label[0]}</Text>
+                      <Text style={styles.networkInitial}>{net.label[0]}</Text>
                     </View>
-                    <Text style={styles.networkName}>{label}</Text>
+                    <Text style={styles.networkName}>{net.label}</Text>
                   </TouchableOpacity>
                 );
               })}
             </View>
+          )}
+
+          {/* Plan Type Selection */}
+          {!loadingPlans && networkPlans.length > 0 && (
+            <>
+              <Text style={styles.sectionLabel}>Plan Type</Text>
+              <View style={styles.filterContainer}>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                  {['All', ...planTypes].map((type) => (
+                    <TouchableOpacity
+                      key={type}
+                      style={[styles.filterTab, selectedPlanType === type && styles.activeFilterTab]}
+                      onPress={() => handlePlanTypeChange(type)}
+                    >
+                      <Text style={[styles.filterText, selectedPlanType === type && styles.activeFilterText]}>
+                        {type}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+            </>
           )}
 
           {/* Phone Input */}
@@ -312,22 +460,24 @@ const BuyDataScreen = ({ navigation }) => {
             Balance: ₦{walletBalance.toLocaleString('en-NG', { minimumFractionDigits: 2 })}
           </Text>
 
-          {/* Filters */}
-          <View style={styles.filterContainer}>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              {FILTERS.map((filter) => (
-                <TouchableOpacity
-                  key={filter}
-                  style={[styles.filterTab, selectedFilter === filter && styles.activeFilterTab]}
-                  onPress={() => setSelectedFilter(filter)}
-                >
-                  <Text style={[styles.filterText, selectedFilter === filter && styles.activeFilterText]}>
-                    {filter}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
+          {/* Duration Filters */}
+          {!loadingPlans && durationFilters.length > 0 && (
+            <View style={styles.filterContainer}>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                {['All', ...durationFilters].map((filter) => (
+                  <TouchableOpacity
+                    key={filter}
+                    style={[styles.filterTab, selectedDuration === filter && styles.activeFilterTab]}
+                    onPress={() => handleDurationChange(filter)}
+                  >
+                    <Text style={[styles.filterText, selectedDuration === filter && styles.activeFilterText]}>
+                      {filter}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+          )}
 
           {/* Plans Grid */}
           {loadingPlans ? (
@@ -342,7 +492,7 @@ const BuyDataScreen = ({ navigation }) => {
               columnWrapperStyle={styles.columnWrapper}
               showsVerticalScrollIndicator={false}
               ListEmptyComponent={
-                <Text style={styles.emptyText}>No plans available for this category.</Text>
+                <Text style={styles.emptyText}>No plans available for this selection.</Text>
               }
             />
           )}
@@ -408,7 +558,8 @@ const styles = StyleSheet.create({
   columnWrapper:     { justifyContent: 'space-between' },
   planCard:          { width: '31%', backgroundColor: '#FFF', borderRadius: 12, padding: 10, marginBottom: 15, alignItems: 'center', borderWidth: 1, borderColor: '#eee', ...SHADOWS.light, position: 'relative' },
   selectedCard:      { borderColor: COLORS.primary, backgroundColor: COLORS.primary },
-  planLabel:         { ...FONTS.medium, fontSize: 11, color: COLORS.textPrimary, textAlign: 'center', marginBottom: 6 },
+  planLabel:         { ...FONTS.medium, fontSize: 11, color: COLORS.textPrimary, textAlign: 'center', marginBottom: 3 },
+  planDuration:      { ...FONTS.regular, fontSize: 10, color: COLORS.textSecondary, textAlign: 'center', marginBottom: 6 },
   planPrice:         { ...FONTS.bold, fontSize: 13, color: COLORS.primary },
   selectedText:      { color: '#FFF' },
   selectedPriceText: { color: '#FFF', ...FONTS.bold, fontSize: 13 },
