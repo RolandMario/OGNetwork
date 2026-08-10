@@ -164,11 +164,22 @@ exports.getPlans = async (req, res) => {
           const activePlans = plans.filter(
             (p) => p.metadata?.syncedFromProvider === activeProvider
           );
+
+          if (activePlans.length > 0) {
+            // Prefer the active provider's plans, but never leave an entire
+            // network/provider empty: if a provider has NO active-tagged plans,
+            // fall back to its (untagged) plans so the screen isn't blank
+            // e.g. when the active provider only synced some networks.
+            const activeProviders = new Set(activePlans.map((p) => p.provider));
+            const fallbackPlans = plans.filter(
+              (p) =>
+                p.metadata?.syncedFromProvider !== activeProvider &&
+                !activeProviders.has(p.provider)
+            );
+            plans = [...activePlans, ...fallbackPlans];
+          }
           // Fallback: if no plans match the active provider tag (e.g., legacy data),
           // keep all plans so the screen isn't empty.
-          if (activePlans.length > 0) {
-            plans = activePlans;
-          }
         }
       } catch (err) {
         console.error('[vtuController.getPlans] provider filter error:', err.message);

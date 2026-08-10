@@ -482,7 +482,7 @@ exports.syncPlans = async (req, res) => {
     res.status(200).json({
       status: 'success',
       data:   results,
-      message: `Synced ${results.synced} plans, skipped ${results.skipped} existing. ${results.errors.length} errors.`,
+      message: `Synced ${results.synced} plans, updated ${results.updated} existing, skipped ${results.skipped}. ${results.errors.length} errors.`,
     });
 
   } catch (error) {
@@ -687,7 +687,7 @@ exports.syncDataPlans = async (req, res) => {
     res.status(200).json({
       status: 'success',
       data: results,
-      message: `Synced ${results.synced} data plans, ${results.skipped} skipped. ${results.errors.length} errors.`,
+      message: `Synced ${results.synced} data plans, updated ${results.updated} existing, skipped ${results.skipped}. ${results.errors.length} errors.`,
     });
   } catch (error) {
     console.error('[adminController.syncDataPlans] error:', error.message);

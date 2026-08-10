@@ -136,6 +136,10 @@ async function getDataPlans(network) {
       label: item.plan || item.dataplan_id,
       description: [item.plan_type, item.month_validate].filter(Boolean).join(' - '),
       amount: item.api_price ?? item.plan_amount ?? 0,
+      // Structured plan-type + validity metadata (used by the admin sync to
+      // annotate ServicePlan.metadata, and by the frontend for grouping/filtering)
+      plan_type: String(item.plan_type || '').trim(),
+      validity: String(item.month_validate || '').trim(),
     }));
     return { plans };
   } catch (error) {

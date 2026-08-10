@@ -28,7 +28,7 @@ const NETWORKS = [
 ];
 
 // Preferred ordering for the plan-type chips.
-const PLAN_TYPE_ORDER = ['Regular', 'Gifting', 'Corporate Gifting', 'Corporate', 'SME', 'Special', 'Data Share', 'Other'];
+const PLAN_TYPE_ORDER = ['Regular', 'Gifting', 'Corporate Gifting', 'Corporate', 'Awoof', 'SME', 'Data Share', 'Special', 'Talkmore', 'Night'];
 
 // Map any provider identifier to its canonical network.
 function getNetworkFromProvider(provider = '') {
@@ -41,8 +41,30 @@ function getNetworkFromProvider(provider = '') {
 }
 
 // Derive the plan type (Gifting, Corporate Gifting, SME, Special, Data Share,
-// Regular) from the provider identifier and the plan text returned by the API.
+// Awoof, Talkmore, ...) for a plan. Prefers the structured plan_type stored in
+// metadata by the sync, then falls back to parsing the provider id + plan text.
 function getPlanType(plan = {}) {
+  // 1. Structured plan type from the provider (metadata.plan_type)
+  const rawType = String(plan.metadata?.plan_type || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (rawType) {
+    if (rawType.includes('corporate gifting')) return 'Corporate Gifting';
+    if (rawType.includes('data share')) return 'Data Share';
+    if (rawType.includes('awoof')) return 'Awoof';
+    if (rawType.includes('talkmore')) return 'Talkmore';
+    if (rawType.startsWith('sme')) return 'SME'; // SME, SME2, SME3, ...
+    if (rawType.includes('corporate')) return 'Corporate';
+    if (rawType.includes('gifting') || rawType.includes('gift')) return 'Gifting';
+    if (rawType.includes('special')) return 'Special';
+    if (rawType.includes('night')) return 'Night';
+    return 'Regular';
+  }
+
+  // 2. Fallback: parse from provider id + plan text
   const provider = String(plan.provider || '').toLowerCase();
   const hay = [
     provider,
@@ -52,12 +74,15 @@ function getPlanType(plan = {}) {
     plan.metadata?.label,
   ].filter(Boolean).join(' ').toLowerCase();
 
-  if (hay.includes('corporate') && (hay.includes('gifting') || hay.includes('gift'))) return 'Corporate Gifting';
+  if (hay.includes('corporate gifting')) return 'Corporate Gifting';
+  if (hay.includes('awoof')) return 'Awoof';
+  if (hay.includes('talkmore')) return 'Talkmore';
+  if (hay.includes('data share') || hay.includes('share')) return 'Data Share';
   if (hay.includes('corporate')) return 'Corporate';
-  if (hay.includes('gifting') || hay.includes('gift')) return 'Gifting';
   if (hay.includes('sme')) return 'SME';
+  if (hay.includes('gifting') || hay.includes('gift')) return 'Gifting';
   if (hay.includes('special')) return 'Special';
-  if (hay.includes('data share') || hay.includes('data_share') || hay.includes('share')) return 'Data Share';
+  if (hay.includes('night')) return 'Night';
   return 'Regular';
 }
 
@@ -65,6 +90,10 @@ function getPlanType(plan = {}) {
 //  1. plan.metadata            (provider-reported, e.g. "GIFTING - 30")
 //  2. plan.description         (mirrors the metadata description)
 //  3. plan.planName            (display label, only explicit unit patterns)
+//
+// Handles the variety of validity strings seen from the providers, e.g.
+// "7 days", "2 DAYS", "14 days", "Daily", "weekly", "30days(3gb day+2gb night)",
+// "(1month)", "One month", "0ne week", "Monthly", "1 year".
 function getDurationDays(plan = {}) {
   const meta     = plan.metadata || {};
   const metaText = [meta.validity, meta.month_validate, meta.description]
@@ -72,18 +101,35 @@ function getDurationDays(plan = {}) {
   const descText = String(plan.description || '').toLowerCase();
   const nameText = String(plan.planName || '').toLowerCase();
 
-  // Parse explicit units OR bare numbers (validity), skipping GB/MB sizes.
+  // Word numbers -> digits (incl. the "0ne week" typo some providers use)
+  const WORD_NUMBERS = { one: 1, '0ne': 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, twelve: 12 };
+
   const parseText = (text) => {
-    const unitMatch = text.match(/(\d+(?:\.\d+)?)\s*(years?|yrs?|months?|weeks?|days?|day)/);
-    if (unitMatch) {
-      const value = parseFloat(unitMatch[1]);
-      const unit  = unitMatch[2];
+    if (!text || !text.trim()) return null;
+    let t = text.toLowerCase();
+    for (const [word, num] of Object.entries(WORD_NUMBERS)) {
+      t = t.split(word).join(String(num));
+    }
+
+    // Explicit "N day(s)/week(s)/month(s)/year(s)" — e.g. "30days", "7 days", "2 DAYS"
+    const m = t.match(/(\d+(?:\.\d+)?)\s*(years?|yrs?|months?|weeks?|wks?|days?)/);
+    if (m) {
+      const value = parseFloat(m[1]);
+      const unit  = m[2].replace('.', '');
       if (unit[0] === 'y') return Math.round(value * 365);
       if (unit.startsWith('month')) return Math.round(value * 30);
       if (unit[0] === 'w') return Math.round(value * 7);
       return Math.round(value);
     }
-    const cleaned = text.replace(/\d+(?:\.\d+)?\s*(gb|mb|tb|kb)\b/g, ' ');
+
+    // Cadence words
+    if (/\bdaily\b|\b1 ?day\b|\bnightly\b|\btoday\b/.test(t)) return 1;
+    if (/\bweekly\b|\b7 ?days?\b/.test(t)) return 7;
+    if (/\bmonthly\b|\b30 ?days?\b|\ba month\b|\bmonth\b/.test(t)) return 30;
+    if (/\byearly\b|\bannually\b|\b365 ?days?\b/.test(t)) return 365;
+
+    // Bare numbers (validity), skipping GB/MB/TB size tokens e.g. "GIFTING - 30"
+    const cleaned = t.replace(/\d+(?:\.\d+)?\s*(gb|mb|tb|kb)\b/g, ' ');
     const nums = (cleaned.match(/\d+/g) || []).map(Number).filter((n) => n >= 1 && n <= 3650);
     if (nums.length) return Math.max(...nums);
     return null;

@@ -32,7 +32,7 @@ function initLevelPrices(basePrice) {
  * @param {Object} [options.AdminConfig] - AdminConfig model for reading provider map
  */
 async function syncDataPlans(ServicePlan, { providerName, AdminConfig } = {}) {
-  const results = { synced: 0, skipped: 0, errors: [] };
+  const results = { synced: 0, updated: 0, skipped: 0, errors: [] };
 
   // Determine which provider to use
   let provider;
@@ -60,6 +60,26 @@ async function syncDataPlans(ServicePlan, { providerName, AdminConfig } = {}) {
       console.log(`[adminService] Got ${plans.length} data plans for ${network.identifier}`);
 
       for (const plan of plans) {
+        const providerPrice = Number(plan.amount) > 0 ? Number(plan.amount) : 0;
+
+        // Fields we always refresh on sync (provider data + active-provider tag).
+        // NOTE: we deliberately do NOT touch `ourPrice` or `prices` for existing
+        // plans, so admin price edits made in the dashboard are preserved.
+        const update = {
+          planName:      plan.label || plan.plan_code,
+          description:   plan.description || plan.label,
+          providerPrice,
+          metadata:      {
+            label:               plan.label || plan.plan_code,
+            description:         plan.description || plan.label,
+            plan_type:           plan.plan_type || '',
+            validity:            plan.validity || '',
+            syncedFromProvider:  providerLabel,
+          },
+          lastSyncedAt:  new Date(),
+          isActive:      true,
+        };
+
         const existing = await ServicePlan.findOne({
           service:  'data',
           provider: network.identifier,
@@ -67,21 +87,19 @@ async function syncDataPlans(ServicePlan, { providerName, AdminConfig } = {}) {
         });
 
         if (existing) {
-          results.skipped++;
+          // Existing plan — refresh provider data + tag it as the active
+          // provider's plan so it is returned by GET /vtu/plans.
+          await ServicePlan.updateOne({ _id: existing._id }, { $set: update });
+          results.updated++;
         } else {
-          const providerPrice = Number(plan.amount);
+          // Brand-new plan
           await ServicePlan.create({
             service:       'data',
             provider:      network.identifier,
             planCode:      plan.plan_code,
-            planName:      plan.label || plan.plan_code,
-            description:   plan.description || plan.label,
-            providerPrice: providerPrice,
             ourPrice:      providerPrice,
             prices:        initLevelPrices(providerPrice),
-            metadata:      { label: plan.label, description: plan.description, syncedFromProvider: providerLabel },
-            lastSyncedAt:  new Date(),
-            _providerData: plan,
+            ...update,
           });
           results.synced++;
         }
@@ -280,11 +298,12 @@ async function syncElectricityPlans(ServicePlan, { providerName, AdminConfig } =
  * @returns {Object} { synced: number, skipped: number, errors: Array }
  */
 async function syncAllPlans(ServicePlan, { providerName, AdminConfig } = {}) {
-  const results = { synced: 0, skipped: 0, errors: [] };
+  const results = { synced: 0, updated: 0, skipped: 0, errors: [] };
 
   try {
     const dataResults = await syncDataPlans(ServicePlan, { providerName, AdminConfig });
     results.synced += dataResults.synced;
+    results.updated += dataResults.updated;
     results.skipped += dataResults.skipped;
     results.errors.push(...dataResults.errors);
 
