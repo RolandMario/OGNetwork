@@ -79,6 +79,82 @@ function getPlanType(plan: ServicePlan): string {
   return 'Regular';
 }
 
+// Extract the validity (in days) from a data plan. Checks in order of authority:
+//  1. plan.metadata            (provider-reported, e.g. "GIFTING - 30")
+//  2. plan.description         (mirrors the metadata description)
+//  3. plan.planName            (display label, only explicit unit patterns)
+function getDurationDays(plan: ServicePlan): number | null {
+  const meta = plan.metadata || {};
+  const metaText = [meta.validity, meta.month_validate, meta.description]
+    .filter((v: any) => v != null && v !== '').join(' ').toLowerCase();
+  const descText = String(plan.description || '').toLowerCase();
+  const nameText = String(plan.planName || '').toLowerCase();
+
+  // Word numbers -> digits (incl. the "0ne week" typo some providers use)
+  const WORD_NUMBERS: Record<string, number> = { one: 1, '0ne': 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, twelve: 12 };
+
+  const parseText = (text: string): number | null => {
+    if (!text || !text.trim()) return null;
+    let t = text.toLowerCase();
+    for (const [word, num] of Object.entries(WORD_NUMBERS)) {
+      t = t.split(word).join(String(num));
+    }
+
+    // Explicit "N day(s)/week(s)/month(s)/year(s)" — e.g. "30days", "7 days", "2 DAYS"
+    const m = t.match(/(\d+(?:\.\d+)?)\s*(years?|yrs?|months?|weeks?|wks?|days?)/);
+    if (m) {
+      const value = parseFloat(m[1]);
+      const unit = m[2].replace('.', '');
+      if (unit[0] === 'y') return Math.round(value * 365);
+      if (unit.startsWith('month')) return Math.round(value * 30);
+      if (unit[0] === 'w') return Math.round(value * 7);
+      return Math.round(value);
+    }
+
+    // Cadence words
+    if (/\bdaily\b|\b1 ?day\b|\bnightly\b|\btoday\b/.test(t)) return 1;
+    if (/\bweekly\b|\b7 ?days?\b/.test(t)) return 7;
+    if (/\bmonthly\b|\b30 ?days?\b|\ba month\b|\bmonth\b/.test(t)) return 30;
+    if (/\byearly\b|\bannually\b|\b365 ?days?\b/.test(t)) return 365;
+
+    // Bare numbers (validity), skipping GB/MB/TB size tokens e.g. "GIFTING - 30"
+    const cleaned = t.replace(/\d+(?:\.\d+)?\s*(gb|mb|tb|kb)\b/g, ' ');
+    const nums = (cleaned.match(/\d+/g) || []).map(Number).filter((n) => n >= 1 && n <= 3650);
+    if (nums.length) return Math.max(...nums);
+    return null;
+  };
+
+  if (metaText.trim()) {
+    const fromMeta = parseText(metaText);
+    if (fromMeta != null) return fromMeta;
+  }
+  if (descText.trim()) {
+    const fromDesc = parseText(descText);
+    if (fromDesc != null) return fromDesc;
+  }
+
+  // Plan name only counts when it carries an explicit unit ("30 Days", "1 Month")
+  const nameUnit = nameText.match(/(\d+(?:\.\d+)?)\s*(years?|yrs?|months?|weeks?|days?|day)/);
+  if (nameUnit) {
+    const value = parseFloat(nameUnit[1]);
+    const unit = nameUnit[2];
+    if (unit[0] === 'y') return Math.round(value * 365);
+    if (unit.startsWith('month')) return Math.round(value * 30);
+    if (unit[0] === 'w') return Math.round(value * 7);
+    return Math.round(value);
+  }
+
+  return null;
+}
+
+// Human-readable duration label (e.g. 7 -> "7 Days", 90 -> "3 Months").
+function getDurationLabel(days: number | null): string {
+  if (days == null) return 'Duration varies';
+  if (days % 365 === 0 && days >= 365) return days === 365 ? '1 Year' : `${days / 365} Years`;
+  if (days % 30 === 0 && days >= 30) return days === 30 ? '1 Month' : `${days / 30} Months`;
+  return `${days} Day${days === 1 ? '' : 's'}`;
+}
+
 interface ServicePlan {
   _id: string;
   service: string;
@@ -445,6 +521,13 @@ export default function PlansPage() {
                     {plan.isActive ? "Active" : "Inactive"}
                   </span>
                 </div>
+
+                {plan.service === "data" && (
+                  <div className="flex items-center gap-1.5 mb-3">
+                    <span className="text-xs text-slate-500">Duration:</span>
+                    <span className="text-sm font-semibold text-slate-800">{getDurationLabel(getDurationDays(plan))}</span>
+                  </div>
+                )}
 
                 <div className="flex items-center gap-4 mb-3">
                   <div>
