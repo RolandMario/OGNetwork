@@ -500,7 +500,7 @@ exports.syncPlans = async (req, res) => {
  * @desc    Get all service plans with pricing
  * @route   GET /api/v1/admin/plans
  * @access  Private, Admin only
- * @query   ?service=data&provider=mtn_gifting_data&page=1&limit=50
+ * @query   ?service=data&provider=mtn_gifting_data&page=1&limit=5000
  */
 exports.getAllPlans = async (req, res) => {
   try {
@@ -511,7 +511,7 @@ exports.getAllPlans = async (req, res) => {
       service,
       provider,
       page: parseInt(page) || 1,
-      limit: Math.min(parseInt(limit) || 150, 200),
+      limit: Math.min(parseInt(limit) || 150, 5000),
     });
 
     res.status(200).json({

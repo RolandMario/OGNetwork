@@ -133,7 +133,7 @@ export default function PlansPage() {
       const token = localStorage.getItem("adminToken");
       const tenantId = localStorage.getItem("tenantId") || "demo";
 
-      const res = await fetch(`${API_BASE}/admin/plans`, {
+      const res = await fetch(`${API_BASE}/admin/plans?limit=5000`, {
         headers: {
           Authorization: `Bearer ${token}`,
           "x-tenant-id": tenantId,
