@@ -7,6 +7,78 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001/api/v
 
 const USER_LEVELS = ['normal', 'affiliate', 'top_user', 'api_user'];
 
+// Canonical data networks + preferred display ordering for the Network filter.
+const NETWORK_ORDER = ['mtn', 'airtel', 'glo', '9mobile'];
+
+// Preferred ordering for the plan-type filter chips.
+const PLAN_TYPE_ORDER = ['Regular', 'Gifting', 'Corporate Gifting', 'Corporate', 'Awoof', 'SME', 'Data Share', 'Special', 'Talkmore', 'Night'];
+
+// Map any provider identifier to its canonical network.
+function getNetworkFromProvider(provider: string): string {
+  const p = String(provider || '').toLowerCase();
+  if (p.includes('mtn')) return 'mtn';
+  if (p.includes('airtel')) return 'airtel';
+  if (p.includes('glo')) return 'glo';
+  if (p.includes('9mobile') || p.includes('etisalat')) return '9mobile';
+  return 'other';
+}
+
+// Pretty-print a network identifier for the filter chips.
+function formatNetworkName(network: string): string {
+  const n = String(network || '').toLowerCase();
+  if (n === 'mtn') return 'MTN';
+  if (n === 'airtel') return 'Airtel';
+  if (n === 'glo') return 'GLO';
+  if (n === '9mobile') return '9mobile';
+  return n.charAt(0).toUpperCase() + n.slice(1);
+}
+
+// Derive the plan type (Gifting, Corporate Gifting, SME, Special, Data Share,
+// Awoof, Talkmore, ...) for a data plan. Prefers the structured plan_type stored
+// in metadata by the sync, then falls back to parsing the provider id + plan text.
+function getPlanType(plan: ServicePlan): string {
+  // 1. Structured plan type from the provider (metadata.plan_type)
+  const rawType = String(plan.metadata?.plan_type || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (rawType) {
+    if (rawType.includes('corporate gifting')) return 'Corporate Gifting';
+    if (rawType.includes('data share')) return 'Data Share';
+    if (rawType.includes('awoof')) return 'Awoof';
+    if (rawType.includes('talkmore')) return 'Talkmore';
+    if (rawType.startsWith('sme')) return 'SME'; // SME, SME2, SME3, ...
+    if (rawType.includes('corporate')) return 'Corporate';
+    if (rawType.includes('gifting') || rawType.includes('gift')) return 'Gifting';
+    if (rawType.includes('special')) return 'Special';
+    if (rawType.includes('night')) return 'Night';
+    return 'Regular';
+  }
+
+  // 2. Fallback: parse from provider id + plan text
+  const provider = String(plan.provider || '').toLowerCase();
+  const hay = [
+    provider,
+    plan.metadata?.description,
+    plan.description,
+    plan.planName,
+    plan.metadata?.label,
+  ].filter(Boolean).join(' ').toLowerCase();
+
+  if (hay.includes('corporate gifting')) return 'Corporate Gifting';
+  if (hay.includes('awoof')) return 'Awoof';
+  if (hay.includes('talkmore')) return 'Talkmore';
+  if (hay.includes('data share') || hay.includes('share')) return 'Data Share';
+  if (hay.includes('corporate')) return 'Corporate';
+  if (hay.includes('sme')) return 'SME';
+  if (hay.includes('gifting') || hay.includes('gift')) return 'Gifting';
+  if (hay.includes('special')) return 'Special';
+  if (hay.includes('night')) return 'Night';
+  return 'Regular';
+}
+
 interface ServicePlan {
   _id: string;
   service: string;
@@ -41,6 +113,8 @@ export default function PlansPage() {
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [serviceFilter, setServiceFilter] = useState("ALL");
+  const [networkFilter, setNetworkFilter] = useState("ALL");
+  const [planTypeFilter, setPlanTypeFilter] = useState("ALL");
   const [editingPlan, setEditingPlan] = useState<ServicePlan | null>(null);
   const [showEditModal, setShowEditModal] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
@@ -198,11 +272,32 @@ export default function PlansPage() {
     return plan.ourPrice;
   };
 
-  const filteredPlans = serviceFilter === "ALL"
-    ? plans
-    : plans.filter(p => p.service === serviceFilter);
-
   const services = ["ALL", ...new Set(plans.map(p => p.service))];
+
+  // Data plans — used to power the Network Type + Plan Type filters below.
+  const dataPlans = plans.filter(p => p.service === "data");
+  const dataNetworks = Array.from(new Set(dataPlans.map(p => getNetworkFromProvider(p.provider))))
+    .filter(n => n !== "other")
+    .sort((a, b) => NETWORK_ORDER.indexOf(a) - NETWORK_ORDER.indexOf(b));
+
+  const networkPlans = networkFilter === "ALL"
+    ? dataPlans
+    : dataPlans.filter(p => getNetworkFromProvider(p.provider) === networkFilter);
+
+  const dataPlanTypes = Array.from(new Set(networkPlans.map(p => getPlanType(p))))
+    .sort((a, b) => {
+      const ai = PLAN_TYPE_ORDER.indexOf(a);
+      const bi = PLAN_TYPE_ORDER.indexOf(b);
+      return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+    });
+
+  const filteredPlans = serviceFilter === "data"
+    ? (planTypeFilter === "ALL"
+        ? networkPlans
+        : networkPlans.filter(p => getPlanType(p) === planTypeFilter))
+    : serviceFilter === "ALL"
+      ? plans
+      : plans.filter(p => p.service === serviceFilter);
 
   const formatLevelName = (level: string) => {
     return level.replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase());
@@ -213,7 +308,10 @@ export default function PlansPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Service Plans</h1>
-          <p className="text-sm text-slate-500 mt-1">{plans.length} total plans</p>
+          <p className="text-sm text-slate-500 mt-1">
+            {plans.length} total plans
+            {(serviceFilter !== "ALL" || networkFilter !== "ALL" || planTypeFilter !== "ALL") && ` • ${filteredPlans.length} shown`}
+          </p>
         </div>
         <div className="flex gap-2 flex-wrap justify-end">
           <button
@@ -264,7 +362,7 @@ export default function PlansPage() {
         {services.map((s) => (
           <button
             key={s}
-            onClick={() => setServiceFilter(s)}
+            onClick={() => { setServiceFilter(s); setNetworkFilter("ALL"); setPlanTypeFilter("ALL"); }}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
               serviceFilter === s
                 ? "bg-blue-600 text-white"
@@ -275,6 +373,53 @@ export default function PlansPage() {
           </button>
         ))}
       </div>
+
+      {/* Data filters: Network Type first, then Plan Type */}
+      {serviceFilter === "data" && (
+        <>
+          {dataNetworks.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Network Type</p>
+              <div className="flex gap-2 flex-wrap">
+                {["ALL", ...dataNetworks].map((n) => (
+                  <button
+                    key={n}
+                    onClick={() => { setNetworkFilter(n); setPlanTypeFilter("ALL"); }}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                      networkFilter === n
+                        ? "bg-indigo-600 text-white"
+                        : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    {n === "ALL" ? "All Networks" : formatNetworkName(n)}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {!loading && networkPlans.length > 0 && dataPlanTypes.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Plan Type</p>
+              <div className="flex gap-2 flex-wrap">
+                {["ALL", ...dataPlanTypes].map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => setPlanTypeFilter(t)}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                      planTypeFilter === t
+                        ? "bg-indigo-600 text-white"
+                        : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    {t === "ALL" ? "All Plan Types" : t}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
 
       {loading ? (
         <div className="flex items-center justify-center h-64">
