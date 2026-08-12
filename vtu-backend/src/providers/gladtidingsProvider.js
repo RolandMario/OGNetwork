@@ -58,14 +58,32 @@ async function purchaseAirtime({ network, amount, mobile_number }) {
   }
 
   try {
-    const response = await apiClient.post('/topup/', {
+    // Gladtidings, Datastation and Geodnatech all run the same platform family
+    // and share the /topup/ endpoint. The working siblings (datastation/geodnatech)
+    // send `airtime_type: 'VTU'` — Gladtidings was missing it, which made the
+    // provider's server reject the request with HTTP 500.
+    const payload = {
       network: getNetworkCode(network, NETWORK_MAP),
       amount: Number(amount),
       mobile_number,
+      airtime_type: 'VTU',
       Ported_number: true,
+    };
+    const maskPhone = (p) => (typeof p === 'string' && p.length > 3 ? `${p.slice(0, 3)}****${p.slice(-3)}` : p);
+
+    // DEBUG LOGGING: capture the exact payload sent (phone masked) so a payload
+    // mismatch with the /topup/ endpoint is visible.
+    console.log('[gladtidingsProvider] Airtime purchase request -> POST /topup/', {
+      ...payload,
+      mobile_number: maskPhone(mobile_number),
     });
 
+    const response = await apiClient.post('/topup/', payload);
     const data = response.data;
+
+    // DEBUG LOGGING: always dump the raw provider response so the real error is
+    // visible even if extractErrorMessage can't parse it into a clean string.
+    console.log(`[gladtidingsProvider] Airtime purchase response (HTTP ${response.status}):`, JSON.stringify(data ?? null));
 
     if (isSuccessResponse(data)) {
       return successResponse({
@@ -74,8 +92,25 @@ async function purchaseAirtime({ network, amount, mobile_number }) {
       });
     }
 
-    throw new Error(data.api_response || data.message || data.response || 'Airtime purchase failed');
+    const err = new Error(data.api_response || data.message || data.response || 'Airtime purchase failed');
+    err.responseData = data; // carry the raw body for downstream diagnosis
+    throw err;
   } catch (error) {
+    // DEBUG LOGGING: dump the raw provider error (status, body, request) so the
+    // exact Gladtidings error message is visible even when extractErrorMessage
+    // cannot parse it into a clean string.
+    console.error('[gladtidingsProvider] Airtime purchase ERROR', {
+      message:      error.message,
+      code:         error.code,
+      status:       error.response?.status,
+      statusText:   error.response?.statusText,
+      responseData: error.response?.data ?? error.responseData ?? null,
+      request: {
+        url:    error.config?.url,
+        method: error.config?.method,
+        data:   error.config?.data,
+      },
+    });
     throw new Error(`[gladtidings] purchaseAirtime: ${extractErrorMessage(error, 'Airtime purchase failed')}`);
   }
 }
