@@ -493,6 +493,51 @@ exports.syncPlans = async (req, res) => {
 };
 
 // ---------------------------------------------------------------------------
+// Provider wallet balances
+// ---------------------------------------------------------------------------
+
+/**
+ * @desc    Get wallet balances for the VTU providers (datastation, geodnatech, gladtidings)
+ * @route   GET /api/v1/admin/providers/balances
+ * @access  Private, Admin only
+ */
+exports.getProviderBalances = async (req, res) => {
+  try {
+    const providerNames = ['datastation', 'geodnatech', 'gladtidings'];
+    const balances = [];
+    const errors = [];
+
+    await Promise.all(
+      providerNames.map(async (name) => {
+        const provider = providerRegistry.PROVIDERS[name];
+        if (!provider || typeof provider.getBalance !== 'function') {
+          errors.push({ provider: name, message: 'getBalance not implemented for this provider.' });
+          return;
+        }
+        try {
+          const bal = await provider.getBalance();
+          balances.push({
+            provider: name,
+            ...bal,
+            retrievedAt: new Date().toISOString(),
+          });
+        } catch (err) {
+          errors.push({ provider: name, message: err.message });
+        }
+      })
+    );
+
+    res.status(200).json({
+      status: 'success',
+      data:   { balances, errors },
+    });
+  } catch (error) {
+    console.error('[adminController.getProviderBalances] error:', error.message);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+// ---------------------------------------------------------------------------
 // Get all plans (admin view — shows both providerPrice and ourPrice)
 // ---------------------------------------------------------------------------
 

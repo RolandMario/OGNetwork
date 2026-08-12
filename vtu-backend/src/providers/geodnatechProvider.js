@@ -638,8 +638,32 @@ async function purchaseElectricity({ meter, plan, amount, phone, type = 'prepaid
 // Exports — common interface
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Balance
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetch the provider's wallet balance from the /user/ endpoint.
+ * @returns {Promise<{accountBalance:number, walletBalance:number, bonusBalance:number, currency:string}>}
+ */
+async function getBalance() {
+  try {
+    const response = await apiClient.get('/user/');
+    const u = response.data?.user || {};
+    return {
+      accountBalance: Number(u.Account_Balance) || 0,
+      walletBalance:  Number(u.wallet_balance) || 0,
+      bonusBalance:   Number(u.bonus_balance) || 0,
+      currency:       'NGN',
+    };
+  } catch (error) {
+    throw new Error(`[geodnatech] getBalance: ${extractErrorMessage(error)}`);
+  }
+}
+
 module.exports = {
   name: 'geodnatech',
+  getBalance,
   getAirtimeNetworks,
   purchaseAirtime,
   getDataNetworks,

@@ -47,6 +47,11 @@ router.delete('/users/:id', adminController.deleteUser);
 router.get('/profits/monthly', adminController.getMonthlyProfits);
 
 // ---------------------------------------------------------------------------
+// Provider wallet balances
+// ---------------------------------------------------------------------------
+router.get('/providers/balances', adminController.getProviderBalances);
+
+// ---------------------------------------------------------------------------
 // Plan Management
 // ---------------------------------------------------------------------------
 
