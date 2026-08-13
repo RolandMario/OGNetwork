@@ -3,6 +3,7 @@ import { createSlice } from '@reduxjs/toolkit';
 const initialState = {
   balance: 0,
   currency: 'NGN',
+  commissionBalance: 0,
   isLoading: false,
   error: null,
   lastUpdated: null,
@@ -39,6 +40,12 @@ const walletSlice = createSlice({
     fetchBalanceFail: (state, action) => {
       state.isLoading = false;
       state.error = action.payload;
+    },
+
+    // Action: Set commission balance (kobo)
+    setCommissionBalance: (state, action) => {
+      state.commissionBalance = action.payload;
+      state.lastUpdated = new Date().toISOString();
     },
     
     // Funding actions
@@ -102,6 +109,7 @@ export const {
   fetchBalanceStart,
   fetchBalanceSuccess,
   fetchBalanceFail,
+  setCommissionBalance,
   initiateFundingStart,
   initiateFundingSuccess,
   initiateFundingFail,

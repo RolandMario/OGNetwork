@@ -8,7 +8,9 @@
 const express       = require('express');
 const router        = express.Router();
 const walletController = require('../controllers/walletController');
+const commissionController = require('../controllers/commissionController');
 const { protect }   = require('../middleware/authMiddleware');
+const verifyPin     = require('../middleware/verifyPin');
 
 // All wallet routes require authentication
 router.use(protect);
@@ -32,5 +34,15 @@ router.get('/manual-transfer-accounts', walletController.getManualTransferAccoun
 
 // POST /wallet/manual-transfer-notify — notify admin of manual transfer
 router.post('/manual-transfer-notify', walletController.notifyManualTransfer);
+
+// ---------------------------------------------------------------------------
+// Commission routes
+// ---------------------------------------------------------------------------
+
+// GET  /wallet/commission — commission balance + history
+router.get('/commission', commissionController.getCommission);
+
+// POST /wallet/commission/withdraw — move commission to main wallet (PIN required)
+router.post('/commission/withdraw', verifyPin, commissionController.withdrawCommission);
 
 module.exports = router;

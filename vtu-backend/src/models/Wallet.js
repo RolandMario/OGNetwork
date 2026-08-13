@@ -8,6 +8,14 @@ const WalletSchema = new mongoose.Schema({
     default: 0,
     min: [0, 'Wallet balance cannot be negative'] // Critical safety check
   },
+  // Commission wallet — holds the user's earned commissions (in base unit / kobo).
+  // These sit separately from the main balance until the user withdraws them to
+  // the main wallet (see commissionController.withdrawCommission).
+  commissionBalance: {
+    type: Number,
+    default: 0,
+    min: [0, 'Commission balance cannot be negative'],
+  },
   currency: { type: String, default: 'NGN' },
   // Optional: Add bonusBalance, referralBalance here
 }, { timestamps: true });

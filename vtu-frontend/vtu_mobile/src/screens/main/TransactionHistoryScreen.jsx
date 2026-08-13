@@ -20,6 +20,8 @@ const TYPE_ICON = {
   CABLE:       { name: 'television-play',  color: '#DD6B20',                bg: '#FFFAF0' },
   ELECTRICITY: { name: 'lightning-bolt',   color: '#D69E2E',                bg: '#FFFFF0' },
   FUNDING:     { name: 'wallet-plus',      color: '#38A169',                bg: '#F0FFF4' },
+  COMMISSION:  { name: 'cash-multiple',    color: '#38A169',                bg: '#F0FFF4' },
+  COMMISSION_WITHDRAWAL: { name: 'swap-horizontal', color: '#3182CE',       bg: '#EBF8FF' },
 };
 
 const STATUS_STYLES = {
@@ -52,6 +54,8 @@ function getTransactionTitle(tx) {
     case 'CABLE':       return `${details?.planName || details?.planId || 'Cable TV'} — IUC ${details?.beneficiary || ''}`;
     case 'ELECTRICITY': return `${details?.planName || 'Electricity'} — Meter ${details?.beneficiary || ''}`;
     case 'FUNDING':     return 'Wallet Funding';
+    case 'COMMISSION':  return `Commission — ${details?.service || 'Service'} purchase`;
+    case 'COMMISSION_WITHDRAWAL': return 'Commission Withdrawn to Wallet';
     default:            return type || 'Transaction';
   }
 }
@@ -119,7 +123,7 @@ const TransactionHistoryScreen = ({ navigation }) => {
   // Render item
   // ---------------------------------------------------------------------------
   const renderItem = useCallback(({ item }) => {
-    const isFunding  = item.type === 'FUNDING';
+    const isCredit  = item.type === 'FUNDING' || item.type === 'COMMISSION';
     const icon       = TYPE_ICON[item.type] || TYPE_ICON.FUNDING;
     const statusStyle= STATUS_STYLES[item.status] || STATUS_STYLES.PENDING;
     const { date, time } = formatDate(item.createdAt);
@@ -141,8 +145,8 @@ const TransactionHistoryScreen = ({ navigation }) => {
 
         {/* Amount + Status */}
         <View style={styles.amountContainer}>
-          <Text style={[styles.amountText, { color: isFunding ? '#38A169' : COLORS.textPrimary }]}>
-            {isFunding ? '+' : '-'}₦{formatAmount(item.amount)}
+          <Text style={[styles.amountText, { color: isCredit ? '#38A169' : COLORS.textPrimary }]}>
+            {isCredit ? '+' : '-'}₦{formatAmount(item.amount)}
           </Text>
           <View style={[styles.statusBadge, { backgroundColor: statusStyle.bg }]}>
             <Text style={[styles.statusText, { color: statusStyle.text }]}>

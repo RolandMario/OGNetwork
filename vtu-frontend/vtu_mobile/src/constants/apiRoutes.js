@@ -26,6 +26,9 @@ export const API_ROUTES = {
     // Manual Transfer
     MANUAL_TRANSFER_ACCOUNTS: '/user/wallet/manual-transfer-accounts',
     MANUAL_TRANSFER_NOTIFY:   '/user/wallet/manual-transfer-notify',
+    // Commission
+    GET_COMMISSION:           '/user/wallet/commission',
+    WITHDRAW_COMMISSION:      '/user/wallet/commission/withdraw',
   },
   NOTIFICATIONS: {
     LIST:             '/user/notifications',

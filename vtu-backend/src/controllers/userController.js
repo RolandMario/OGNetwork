@@ -229,6 +229,8 @@ exports.getDashboardData = async (req, res) => {
         wallet: {
           balanceKobo:  wallet.balance,
           balanceNaira: wallet.balance / 100,
+          commissionBalanceKobo:  wallet.commissionBalance || 0,
+          commissionBalanceNaira: (wallet.commissionBalance || 0) / 100,
           currency:     wallet.currency,
         },
         recentTransactions: transactions,

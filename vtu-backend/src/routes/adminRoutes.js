@@ -87,6 +87,12 @@ router.get('/config/airtime-profit', adminController.getAirtimeProfitConfig);
 router.patch('/config/airtime-profit', adminController.updateAirtimeProfitConfig);
 
 // ---------------------------------------------------------------------------
+// Service Commission Config
+// ---------------------------------------------------------------------------
+router.get('/config/commission', adminController.getCommissionConfig);
+router.patch('/config/commission', adminController.updateCommissionConfig);
+
+// ---------------------------------------------------------------------------
 // Provider Configuration
 // ---------------------------------------------------------------------------
 

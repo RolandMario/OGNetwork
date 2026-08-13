@@ -5,6 +5,7 @@
 const adminService = require('../services/adminService');
 const providerRegistry = require('../services/providerRegistry');
 const notificationService = require('../services/notificationService');
+const commissionService = require('../services/commissionService');
 
 // ---------------------------------------------------------------------------
 // Dashboard
@@ -866,6 +867,61 @@ exports.updateAirtimeProfitConfig = async (req, res) => {
     });
   } catch (error) {
     console.error('[adminController.updateAirtimeProfitConfig] error:', error.message);
+    res.status(400).json({ status: 'fail', message: error.message });
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Service Commission Config (per service, 1–10%)
+// ---------------------------------------------------------------------------
+
+/**
+ * @desc    Get commission % paid to users per service
+ * @route   GET /api/v1/admin/config/commission
+ * @access  Private, Admin only
+ */
+exports.getCommissionConfig = async (req, res) => {
+  try {
+    const AdminConfig = req.models.AdminConfig;
+    const rates = await commissionService.getServiceCommissionRates(AdminConfig);
+
+    res.status(200).json({
+      status: 'success',
+      data: { commissionRates: rates },
+    });
+  } catch (error) {
+    console.error('[adminController.getCommissionConfig] error:', error.message);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+/**
+ * @desc    Update commission % paid to users per service
+ * @route   PATCH /api/v1/admin/config/commission
+ * @access  Private, Admin only
+ * @body    { commissionRates: { airtime: 2, data: 2, cable: 2, electricity: 2 } }
+ */
+exports.updateCommissionConfig = async (req, res) => {
+  try {
+    const AdminConfig = req.models.AdminConfig;
+    const { commissionRates } = req.body;
+
+    if (!commissionRates || typeof commissionRates !== 'object') {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'commissionRates object is required with service keys.',
+      });
+    }
+
+    const updated = await commissionService.updateServiceCommissionRates(AdminConfig, commissionRates);
+
+    res.status(200).json({
+      status: 'success',
+      data: { commissionRates: updated },
+      message: 'Commission rates updated successfully.',
+    });
+  } catch (error) {
+    console.error('[adminController.updateCommissionConfig] error:', error.message);
     res.status(400).json({ status: 'fail', message: error.message });
   }
 };

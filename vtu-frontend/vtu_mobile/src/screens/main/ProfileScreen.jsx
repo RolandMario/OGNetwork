@@ -19,8 +19,9 @@ import { useFocusEffect } from '@react-navigation/native';
 import { COLORS, SIZES, FONTS, SHADOWS } from '../../constants/theme';
 import apiClient from '../../services/api';
 import { API_ROUTES } from '../../constants/apiRoutes';
+import TransactionPinModal from '../../components/TransactionPinModal';
 import { logout as reduxLogout } from '../../redux/slices/authSlice';
-import { fetchBalanceSuccess } from '../../redux/slices/walletSlice';
+import { fetchBalanceSuccess, setCommissionBalance } from '../../redux/slices/walletSlice';
 import { useUser } from '../../context/userContext';
 
 // ---------------------------------------------------------------------------
@@ -34,6 +35,14 @@ const ProfileScreen = ({ navigation }) => {
   const [user,        setUser]        = useState(null);
   const [loading,     setLoading]     = useState(true);
   const [refreshing,  setRefreshing]  = useState(false);
+
+  // Commission wallet state
+  const [commissionKobo, setCommissionKobo]  = useState(0);
+  const [commissionLoading, setCommissionLoading] = useState(false);
+  // PIN modal for withdrawal
+  const [isPinModalVisible, setIsPinModalVisible] = useState(false);
+  const [isWithdrawing, setIsWithdrawing]       = useState(false);
+  const [pinError, setPinError]                 = useState('');
 
   // ---------------------------------------------------------------------------
   // Fetch profile + wallet in one call
@@ -53,6 +62,11 @@ const ProfileScreen = ({ navigation }) => {
             currency: wallet.currency || 'NGN',
           }));
         }
+
+        // Capture the commission wallet balance (kobo)
+        const commKobo = wallet?.commissionBalanceKobo || 0;
+        setCommissionKobo(commKobo);
+        dispatch(setCommissionBalance(commKobo));
       }
     } catch (error) {
       console.error('[Profile] fetchProfile error:', error.response?.data || error.message);
@@ -72,6 +86,28 @@ const ProfileScreen = ({ navigation }) => {
   const onRefresh = () => {
     setRefreshing(true);
     fetchProfile();
+  };
+
+  // ---------------------------------------------------------------------------
+  // Withdraw commission to main wallet (requires transaction PIN)
+  // ---------------------------------------------------------------------------
+  const handleWithdrawCommission = async (pin) => {
+    setIsWithdrawing(true);
+    setPinError('');
+    try {
+      const response = await apiClient.post(API_ROUTES.WALLET.WITHDRAW_COMMISSION, { pin });
+      Alert.alert(
+        'Withdrawal Successful',
+        response.data?.message || 'Commission withdrawn to your main wallet.',
+        [{ text: 'OK', onPress: () => setIsPinModalVisible(false) }]
+      );
+      // Refresh wallets so the main balance + commission reflect the transfer
+      fetchProfile();
+    } catch (error) {
+      setPinError(error.response?.data?.message || 'Withdrawal failed. Please try again.');
+    } finally {
+      setIsWithdrawing(false);
+    }
   };
 
   // ---------------------------------------------------------------------------
@@ -167,6 +203,28 @@ const ProfileScreen = ({ navigation }) => {
             <Text style={styles.fundBtnText}>Fund</Text>
           </TouchableOpacity>
         </View>
+
+        {/* Commission wallet summary */}
+        <View style={styles.commissionCard}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.balanceLabel}>Commission / Cashback</Text>
+            <Text style={styles.commissionValue}>
+              ₦{(commissionKobo / 100).toLocaleString('en-NG', { minimumFractionDigits: 2 })}
+            </Text>
+            <Text style={styles.commissionHint}>Earn on every purchase — withdraw to wallet anytime</Text>
+          </View>
+          <TouchableOpacity
+            style={[styles.commissionBtn, commissionKobo <= 0 && { backgroundColor: 'rgba(255,255,255,0.25)' }]}
+            onPress={() => setIsPinModalVisible(true)}
+            disabled={commissionKobo <= 0}
+          >
+            {commissionLoading ? (
+              <ActivityIndicator size="small" color={COLORS.primary} />
+            ) : (
+              <Text style={styles.commissionBtnText}>Withdraw</Text>
+            )}
+          </TouchableOpacity>
+        </View>
       </View>
 
       <ScrollView
@@ -233,6 +291,15 @@ const ProfileScreen = ({ navigation }) => {
 
         <Text style={styles.versionText}>Version 1.0.2</Text>
       </ScrollView>
+
+      {/* PIN modal for commission withdrawal */}
+      <TransactionPinModal
+        isVisible={isPinModalVisible}
+        onClose={() => { setIsPinModalVisible(false); setPinError(''); }}
+        onSubmit={handleWithdrawCommission}
+        isLoading={isWithdrawing}
+        error={pinError}
+      />
     </SafeAreaView>
   );
 };
@@ -291,6 +358,31 @@ const styles = StyleSheet.create({
     borderRadius: 20,
   },
   fundBtnText: { ...FONTS.bold, fontSize: 13, color: COLORS.primary },
+
+  // Commission wallet card
+  commissionCard: {
+    marginTop: 12,
+    backgroundColor: 'rgba(0,200,151,0.18)',
+    borderRadius: 14,
+    padding: 16,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(0,200,151,0.35)',
+  },
+  commissionValue: { ...FONTS.bold, fontSize: 20, color: COLORS.textWhite, marginTop: 4 },
+  commissionHint: { ...FONTS.regular, fontSize: 11, color: 'rgba(255,255,255,0.65)', marginTop: 3 },
+  commissionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: COLORS.accent,
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    borderRadius: 20,
+  },
+  commissionBtnText: { ...FONTS.bold, fontSize: 13, color: COLORS.primary },
 
   content: { padding: SIZES.padding },
   sectionTitle: { ...FONTS.bold, fontSize: 14, color: COLORS.textSecondary, marginBottom: 10, marginTop: 15, textTransform: 'uppercase' },

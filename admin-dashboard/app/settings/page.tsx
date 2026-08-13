@@ -66,6 +66,18 @@ export default function SettingsPage() {
   const [profitSaved, setProfitSaved] = useState(false);
   const [profitError, setProfitError] = useState<string | null>(null);
 
+  // Service commission % by service (1–10%)
+  const [commissionRates, setCommissionRates] = useState<Record<string, number>>({
+    airtime: 0,
+    data: 0,
+    cable: 0,
+    electricity: 0,
+  });
+  const [commissionLoading, setCommissionLoading] = useState(true);
+  const [commissionSaving, setCommissionSaving] = useState(false);
+  const [commissionSaved, setCommissionSaved] = useState(false);
+  const [commissionError, setCommissionError] = useState<string | null>(null);
+
   // Provider config state
   const [providerMap, setProviderMap] = useState<ProviderMap>({
     airtime: 'peyflex',
@@ -85,7 +97,42 @@ export default function SettingsPage() {
     }
     fetchAirtimeProfitConfig();
     fetchProviderConfig();
+    fetchCommissionConfig();
   }, []);
+
+  const fetchCommissionConfig = async () => {
+    try {
+      setCommissionLoading(true);
+      const data = await fetchWithAuth("/admin/config/commission");
+      setCommissionRates(data.data.commissionRates || {
+        airtime: 0,
+        data: 0,
+        cable: 0,
+        electricity: 0,
+      });
+    } catch (err: any) {
+      setCommissionError(err.message);
+    } finally {
+      setCommissionLoading(false);
+    }
+  };
+
+  const handleSaveCommission = async () => {
+    try {
+      setCommissionSaving(true);
+      setCommissionError(null);
+      await fetchWithAuth("/admin/config/commission", {
+        method: "PATCH",
+        body: JSON.stringify({ commissionRates }),
+      });
+      setCommissionSaved(true);
+      setTimeout(() => setCommissionSaved(false), 3000);
+    } catch (err: any) {
+      setCommissionError(err.message);
+    } finally {
+      setCommissionSaving(false);
+    }
+  };
 
   const fetchAirtimeProfitConfig = async () => {
     try {
@@ -328,6 +375,78 @@ export default function SettingsPage() {
                 "✓ Saved"
               ) : (
                 "Save Profit Levels"
+              )}
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Service Commission by Service */}
+      <div className="bg-white rounded-xl border border-slate-200 p-6">
+        <h2 className="text-lg font-semibold text-slate-900 mb-4">Service Commission (Members Cashback)</h2>
+        <p className="text-sm text-slate-500 mb-4">
+          Set the percentage of every purchase that is paid back to the member's commission wallet (range 1–10%, 0 disables it for that service). This is based on the amount the member was debited.
+        </p>
+        {commissionLoading ? (
+          <div className="flex items-center gap-2 text-sm text-slate-500">
+            <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+            Loading commission configuration...
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {Object.keys(commissionRates).map((service) => (
+              <div key={service} className="flex items-center justify-between py-2 border-b border-slate-100 last:border-b-0">
+                <label className="text-sm font-medium text-slate-700 w-32">
+                  {SERVICE_LABELS[service] || service}
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="range"
+                    min="0"
+                    max="10"
+                    step="0.5"
+                    value={commissionRates[service] || 0}
+                    onChange={(e) => {
+                      const val = parseFloat(e.target.value);
+                      setCommissionRates(prev => ({ ...prev, [service]: val }));
+                    }}
+                    className="w-24 h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                  />
+                  <input
+                    type="number"
+                    min="0"
+                    max="10"
+                    step="0.5"
+                    value={commissionRates[service] || 0}
+                    onChange={(e) => {
+                      const val = parseFloat(e.target.value) || 0;
+                      setCommissionRates(prev => ({ ...prev, [service]: val }));
+                    }}
+                    className="w-16 px-2 py-1 border border-slate-300 rounded-lg text-sm text-center focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                  />
+                  <span className="text-sm font-medium text-slate-600">%</span>
+                </div>
+              </div>
+            ))}
+            {commissionError && (
+              <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                {commissionError}
+              </p>
+            )}
+            <button
+              onClick={handleSaveCommission}
+              disabled={commissionSaving}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {commissionSaving ? (
+                <span className="flex items-center gap-2">
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  Saving...
+                </span>
+              ) : commissionSaved ? (
+                "✓ Saved"
+              ) : (
+                "Save Commission Rates"
               )}
             </button>
           </div>

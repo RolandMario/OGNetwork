@@ -4,7 +4,7 @@ const TransactionSchema = new mongoose.Schema({
   user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   type: { 
     type: String, 
-    enum: ['FUNDING', 'AIRTIME', 'DATA', 'CABLE', 'ELECTRICITY', 'ADMIN_CREDIT', 'ADMIN_DEBIT', 'MANUAL_FUNDING'], 
+    enum: ['FUNDING', 'AIRTIME', 'DATA', 'CABLE', 'ELECTRICITY', 'ADMIN_CREDIT', 'ADMIN_DEBIT', 'MANUAL_FUNDING', 'COMMISSION', 'COMMISSION_WITHDRAWAL'], 
     required: true 
   },
   amount: { type: Number, required: true }, // In base unit (Kobo)

@@ -5,6 +5,7 @@
 const vtuService = require('../services/vtuService');
 const providerRegistry = require('../services/providerRegistry');
 const adminService = require('../services/adminService');
+const commissionService = require('../services/commissionService');
 
 // ---------------------------------------------------------------------------
 // Helper — debit wallet and create a PENDING transaction
@@ -151,7 +152,7 @@ exports.getPlans = async (req, res) => {
     if (provider) filter.provider = provider;
 
     let plans = await ServicePlan.find(filter)
-      .select('service provider planCode planName description ourPrice metadata')
+      .select('service provider planCode planName description ourPrice prices metadata')
       .sort({ provider: 1, ourPrice: 1 })
       .lean();
 
@@ -185,6 +186,20 @@ exports.getPlans = async (req, res) => {
         console.error('[vtuController.getPlans] provider filter error:', err.message);
       }
     }
+
+    // Resolve the price this user actually sees & pays, based on their
+    // membership level (normal / affiliate / top_user / api_user).
+    // Admin configures absolute per-level prices; prices default to 0 in the
+    // schema, so when a level's price is invalid/missing we fall back to ourPrice.
+    const userLevel = req.user.level || 'normal';
+    plans = plans.map((plan) => {
+      const levelPrice = plan.prices && plan.prices[userLevel];
+      const resolved   = (levelPrice && levelPrice > 0) ? levelPrice : plan.ourPrice;
+      // Overwrite ourPrice (what the screens read) with the user's level price
+      // and expose it explicitly as `price` too. Keeps every existing display
+      // (data/cable) aligned with the amount the backend will actually debit.
+      return { ...plan, price: resolved, ourPrice: resolved, userLevel };
+    });
 
     // Group by provider if no specific provider requested
     let responseData;
@@ -472,6 +487,17 @@ exports.buyAirtime = async (req, res) => {
       }
     );
 
+    // Credit the user's commission wallet (x% of the amount they were debited)
+    await commissionService.creditPurchaseCommission({
+      userId,
+      amountDebitedKobo: txData.transaction.amount,
+      service:           'airtime',
+      Wallet,
+      Transaction,
+      AdminConfig:       req.models.AdminConfig,
+      sourceReference:   txData.reference,
+    });
+
     res.status(200).json({
       status:  'success',
       message: `₦${amount} airtime sent to ${mobile_number}`,
@@ -562,6 +588,17 @@ exports.buyData = async (req, res) => {
       }
     );
 
+    // Credit the user's commission wallet (x% of the amount they were debited)
+    await commissionService.creditPurchaseCommission({
+      userId,
+      amountDebitedKobo: txData.transaction.amount,
+      service:           'data',
+      Wallet,
+      Transaction,
+      AdminConfig:       req.models.AdminConfig,
+      sourceReference:   txData.reference,
+    });
+
     res.status(200).json({
       status:  'success',
       message: `Data bundle sent to ${mobile_number}`,
@@ -650,6 +687,17 @@ exports.subscribeCable = async (req, res) => {
       { _id: txData.transaction._id },
       { status: 'SUCCESS', newBalance: txData.newBalance, profit: cableProfitKobo }
     );
+
+    // Credit the user's commission wallet (x% of the amount they were debited)
+    await commissionService.creditPurchaseCommission({
+      userId,
+      amountDebitedKobo: txData.transaction.amount,
+      service:           'cable',
+      Wallet,
+      Transaction,
+      AdminConfig:       req.models.AdminConfig,
+      sourceReference:   txData.reference,
+    });
 
     res.status(200).json({
       status:  'success',
@@ -847,6 +895,17 @@ exports.buyElectricity = async (req, res) => {
         },
       }
     );
+
+    // Credit the user's commission wallet (x% of the amount they were debited)
+    await commissionService.creditPurchaseCommission({
+      userId,
+      amountDebitedKobo: txData.transaction.amount,
+      service:           'electricity',
+      Wallet,
+      Transaction,
+      AdminConfig:       req.models.AdminConfig,
+      sourceReference:   txData.reference,
+    });
 
     res.status(200).json({
       status:  'success',
