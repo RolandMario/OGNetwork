@@ -49,6 +49,7 @@ const BuyAirtimeScreen = ({ navigation }) => {
 
   // PIN modal states
   const [isSummaryModalVisible, setIsSummaryModalVisible] = useState(false); // NEW
+  const [summaryTransaction, setSummaryTransaction] = useState(null); // NEW
   const [isPinModalVisible, setIsPinModalVisible] = useState(false);
   const [isProcessing, setIsProcessing]           = useState(false);
   const [pinError, setPinError]                   = useState('');
@@ -130,7 +131,7 @@ const BuyAirtimeScreen = ({ navigation }) => {
   // ---------------------------------------------------------------------------
   // Validate then open SUMMARY modal (NEW)
   // ---------------------------------------------------------------------------
-  const initiatePurchase = () => {
+  const initiatePurchase = async () => {
     if (!phone || phone.length !== 11) {
       Alert.alert('Invalid Phone', 'Please enter a valid 11-digit phone number.');
       return;
@@ -145,7 +146,35 @@ const BuyAirtimeScreen = ({ navigation }) => {
     }
 
     setPinError('');
-    setIsSummaryModalVisible(true); // CHANGED: Show summary modal first
+
+    try {
+      const resp = await apiClient.get(`${API_ROUTES.VTU.COMMISSION}?service=airtime`);
+      const rate = resp.data?.data?.rate ?? 0;
+      const commissionAmount = Number(amount) * Number(rate) / 100;
+
+      setSummaryTransaction({
+        serviceType: 'Airtime',
+        amount: Number(amount) || 0,
+        commission: commissionAmount,
+        beneficiary: phone,
+        planDetails: selectedNetwork,
+        provider: selectedNetwork.toUpperCase(),
+        totalAmount: Number(amount) + commissionAmount,
+      });
+    } catch (err) {
+      console.error('[BuyAirtime] Failed to get commission rate:', err.message || err);
+      setSummaryTransaction({
+        serviceType: 'Airtime',
+        amount: Number(amount) || 0,
+        commission: 0,
+        beneficiary: phone,
+        planDetails: selectedNetwork,
+        provider: selectedNetwork.toUpperCase(),
+        totalAmount: Number(amount) || 0,
+      });
+    }
+
+    setIsSummaryModalVisible(true);
   };
 
   // ---------------------------------------------------------------------------
@@ -347,15 +376,7 @@ const BuyAirtimeScreen = ({ navigation }) => {
         isVisible={isSummaryModalVisible}
         onClose={() => setIsSummaryModalVisible(false)}
         onConfirm={onSummaryConfirm}
-        transaction={{
-          serviceType: 'Airtime',
-          amount: Number(amount) || 0,
-          commission: 0,
-          beneficiary: phone,
-          planDetails: selectedNetwork,
-          provider: selectedNetwork.toUpperCase(),
-          totalAmount: Number(amount) || 0,
-        }}
+        transaction={summaryTransaction}
       />
 
       {/* PIN Modal */}

@@ -247,6 +247,32 @@ exports.getPlans = async (req, res) => {
 };
 
 // ---------------------------------------------------------------------------
+// Commission config for user-facing clients
+// ---------------------------------------------------------------------------
+exports.getCommissionConfig = async (req, res) => {
+  try {
+    const service = req.query.service; // optional: 'data'|'airtime'|'cable'|'electricity'
+    const AdminConfig = req.models.AdminConfig;
+    const commissionService = require('../services/commissionService');
+
+    const rates = await commissionService.getServiceCommissionRates(AdminConfig);
+
+    if (service) {
+      const s = String(service).toLowerCase();
+      if (!['airtime', 'data', 'cable', 'electricity'].includes(s)) {
+        return res.status(400).json({ status: 'fail', message: 'Invalid service parameter.' });
+      }
+      return res.status(200).json({ status: 'success', data: { service: s, rate: rates[s] } });
+    }
+
+    res.status(200).json({ status: 'success', data: { rates } });
+  } catch (error) {
+    console.error('[vtuController.getCommissionConfig] error:', error.message);
+    res.status(500).json({ status: 'error', message: 'Failed to load commission configuration.' });
+  }
+};
+
+// ---------------------------------------------------------------------------
 // Lookup helpers — still needed for providers list and IUC verify
 // ---------------------------------------------------------------------------
 

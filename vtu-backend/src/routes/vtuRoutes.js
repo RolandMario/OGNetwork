@@ -47,4 +47,9 @@ router.get('/electricity/plans',    vtuController.getElectricityPlans);
 router.get('/electricity/verify',   vtuController.verifyMeter);
 router.post('/electricity/buy',     verifyPin, vtuController.buyElectricity);
 
+// ---------------------------------------------------------------------------
+// Config (user-facing)
+// ---------------------------------------------------------------------------
+router.get('/config/commission', vtuController.getCommissionConfig);
+
 module.exports = router;

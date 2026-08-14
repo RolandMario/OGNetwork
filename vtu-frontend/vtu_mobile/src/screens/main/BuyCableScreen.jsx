@@ -39,6 +39,7 @@ const BuyCableScreen = ({ navigation }) => {
   const [loadingPlans,      setLoadingPlans]      = useState(true);
   const [isVerifying,       setIsVerifying]       = useState(false);
   const [isSummaryModalVisible, setIsSummaryModalVisible] = useState(false); // NEW
+  const [summaryTransaction, setSummaryTransaction] = useState(null); // NEW
   const [isPinModalVisible, setIsPinModalVisible] = useState(false);
   const [isProcessing,      setIsProcessing]      = useState(false);
   const [pinError,          setPinError]          = useState('');
@@ -137,7 +138,7 @@ const BuyCableScreen = ({ navigation }) => {
   // ---------------------------------------------------------------------------
   // Initiate purchase (show SUMMARY modal first)
   // ---------------------------------------------------------------------------
-  const initiatePurchase = () => {
+  const initiatePurchase = async () => {
     if (!iucNumber || iucNumber.length < 5) {
       Alert.alert('IUC Required', 'Please enter your smartcard / IUC number.');
       return;
@@ -158,7 +159,35 @@ const BuyCableScreen = ({ navigation }) => {
       return;
     }
     setPinError('');
-    setIsSummaryModalVisible(true); // CHANGED: Show summary modal first
+
+    try {
+      const resp = await apiClient.get(`${API_ROUTES.VTU.COMMISSION}?service=cable`);
+      const rate = resp.data?.data?.rate ?? 0;
+      const commissionAmount = Number(selectedPlan.ourPrice) * Number(rate) / 100;
+
+      setSummaryTransaction({
+        serviceType: 'Cable TV',
+        amount: selectedPlan?.ourPrice || 0,
+        commission: commissionAmount,
+        beneficiary: iucNumber,
+        planDetails: selectedPlan?.planName || '',
+        provider: selectedProvider || '',
+        totalAmount: (Number(selectedPlan?.ourPrice || 0) + commissionAmount),
+      });
+    } catch (err) {
+      console.error('[BuyCable] Failed to load commission rate:', err.message || err);
+      setSummaryTransaction({
+        serviceType: 'Cable TV',
+        amount: selectedPlan?.ourPrice || 0,
+        commission: 0,
+        beneficiary: iucNumber,
+        planDetails: selectedPlan?.planName || '',
+        provider: selectedProvider || '',
+        totalAmount: selectedPlan?.ourPrice || 0,
+      });
+    }
+
+    setIsSummaryModalVisible(true);
   };
 
   // ---------------------------------------------------------------------------
@@ -377,15 +406,7 @@ const BuyCableScreen = ({ navigation }) => {
         isVisible={isSummaryModalVisible}
         onClose={() => setIsSummaryModalVisible(false)}
         onConfirm={onSummaryConfirm}
-        transaction={{
-          serviceType: 'Cable TV',
-          amount: selectedPlan?.ourPrice || 0,
-          commission: 0,
-          beneficiary: iucNumber,
-          planDetails: selectedPlan?.planName || '',
-          provider: selectedProvider?.toUpperCase() || '',
-          totalAmount: selectedPlan?.ourPrice || 0,
-        }}
+        transaction={summaryTransaction}
       />
 
       {/* PIN Modal */}

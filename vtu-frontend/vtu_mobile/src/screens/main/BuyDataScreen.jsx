@@ -186,6 +186,7 @@ const BuyDataScreen = ({ navigation }) => {
 
   const [loadingPlans,      setLoadingPlans]      = useState(true);
   const [isSummaryModalVisible, setIsSummaryModalVisible] = useState(false); // NEW: Summary modal state
+  const [summaryTransaction, setSummaryTransaction] = useState(null); // NEW: transaction details for summary
   const [isPinModalVisible, setIsPinModalVisible] = useState(false);
   const [isProcessing,      setIsProcessing]      = useState(false);
   const [pinError,          setPinError]          = useState('');
@@ -309,7 +310,7 @@ const BuyDataScreen = ({ navigation }) => {
   // ---------------------------------------------------------------------------
   // Initiate purchase
   // ---------------------------------------------------------------------------
-  const initiatePurchase = () => {
+  const initiatePurchase = async () => {
     if (!phone || phone.length !== 11) {
       Alert.alert('Invalid Phone', 'Please enter a valid 11-digit phone number.');
       return;
@@ -323,8 +324,39 @@ const BuyDataScreen = ({ navigation }) => {
       Alert.alert('Insufficient Balance', `Your wallet balance is ₦${walletBalance.toLocaleString()}.`);
       return;
     }
+
     setPinError('');
-    setIsSummaryModalVisible(true); // CHANGED: Show summary modal first
+
+    // Fetch commission rate for data from backend
+    try {
+      const resp = await apiClient.get(`${API_ROUTES.VTU.COMMISSION}?service=data`);
+      const rate = resp.data?.data?.rate ?? 0;
+      const commissionAmount = Number(selectedPlan.ourPrice) * Number(rate) / 100;
+
+      setIsSummaryModalVisible(true);
+      setSummaryTransaction({
+        serviceType: 'Data',
+        amount: selectedPlan?.ourPrice || 0,
+        commission: commissionAmount,
+        beneficiary: phone,
+        planDetails: selectedPlan?.planName || '',
+        provider: selectedPlan?.provider || '',
+        totalAmount: (Number(selectedPlan?.ourPrice || 0) + commissionAmount),
+      });
+    } catch (err) {
+      console.error('[BuyData] Failed to load commission rate:', err.message || err);
+      // Fallback: show summary with zero commission
+      setIsSummaryModalVisible(true);
+      setSummaryTransaction({
+        serviceType: 'Data',
+        amount: selectedPlan?.ourPrice || 0,
+        commission: 0,
+        beneficiary: phone,
+        planDetails: selectedPlan?.planName || '',
+        provider: selectedPlan?.provider || '',
+        totalAmount: selectedPlan?.ourPrice || 0,
+      });
+    }
   };
 
   // ---------------------------------------------------------------------------
@@ -581,15 +613,7 @@ const BuyDataScreen = ({ navigation }) => {
         isVisible={isSummaryModalVisible}
         onClose={() => setIsSummaryModalVisible(false)}
         onConfirm={onSummaryConfirm}
-        transaction={{
-          serviceType: 'Data',
-          amount: selectedPlan?.ourPrice || 0,
-          commission: 0, // Data purchases don't have commission
-          beneficiary: phone,
-          planDetails: selectedPlan?.planName || '',
-          provider: selectedPlan?.provider || '',
-          totalAmount: selectedPlan?.ourPrice || 0,
-        }}
+        transaction={summaryTransaction}
       />
 
       {/* PIN Modal */}

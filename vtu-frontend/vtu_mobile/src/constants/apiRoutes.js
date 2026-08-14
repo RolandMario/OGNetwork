@@ -59,5 +59,7 @@ export const API_ROUTES = {
     ELECTRICITY_PLANS:  '/vtu/electricity/plans',
     ELECTRICITY_VERIFY: '/vtu/electricity/verify',
     BUY_ELECTRICITY:    '/vtu/electricity/buy',
+    // Commission config (user-facing)
+    COMMISSION:         '/vtu/config/commission',
   },
 };

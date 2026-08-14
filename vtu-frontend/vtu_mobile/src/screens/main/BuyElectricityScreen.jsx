@@ -34,6 +34,7 @@ const BuyElectricityScreen = ({ navigation }) => {
   const [isVerifying,     setIsVerifying]     = useState(false);
   const [isModalVisible,  setModalVisible]    = useState(false);
   const [isSummaryModalVisible, setIsSummaryModalVisible] = useState(false); // NEW
+  const [summaryTransaction, setSummaryTransaction] = useState(null); // NEW
   const [isPinModalVisible,setIsPinModalVisible] = useState(false);
   const [isProcessing,    setIsProcessing]    = useState(false);
   const [pinError,        setPinError]        = useState('');
@@ -155,6 +156,34 @@ const BuyElectricityScreen = ({ navigation }) => {
     }
 
     setPinError('');
+
+    try {
+      const resp = await apiClient.get(`${API_ROUTES.VTU.COMMISSION}?service=electricity`);
+      const rate = resp.data?.data?.rate ?? 0;
+      const commissionAmount = Number(amount) * Number(rate) / 100;
+
+      setSummaryTransaction({
+        serviceType: 'Electricity',
+        amount: Number(amount) || 0,
+        commission: commissionAmount,
+        beneficiary: meterNumber,
+        planDetails: `${meterType} - ${selectedDisco?.planName || ''}`,
+        provider: selectedDisco?.provider || '',
+        totalAmount: (Number(amount) + commissionAmount),
+      });
+    } catch (err) {
+      console.error('[BuyElectricity] Failed to load commission rate:', err.message || err);
+      setSummaryTransaction({
+        serviceType: 'Electricity',
+        amount: Number(amount) || 0,
+        commission: 0,
+        beneficiary: meterNumber,
+        planDetails: `${meterType} - ${selectedDisco?.planName || ''}`,
+        provider: selectedDisco?.provider || '',
+        totalAmount: Number(amount) || 0,
+      });
+    }
+
     setIsSummaryModalVisible(true); // CHANGED: Show summary modal first
   };
 
@@ -392,15 +421,7 @@ const BuyElectricityScreen = ({ navigation }) => {
         isVisible={isSummaryModalVisible}
         onClose={() => setIsSummaryModalVisible(false)}
         onConfirm={onSummaryConfirm}
-        transaction={{
-          serviceType: 'Electricity',
-          amount: Number(amount) || 0,
-          commission: 0,
-          beneficiary: meterNumber,
-          planDetails: `${meterType} - ${selectedDisco?.planName || ''}`,
-          provider: selectedDisco?.provider || '',
-          totalAmount: Number(amount) || 0,
-        }}
+        transaction={summaryTransaction}
       />
 
       {/* PIN Modal */}
