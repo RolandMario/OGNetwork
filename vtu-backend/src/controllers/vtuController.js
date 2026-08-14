@@ -151,10 +151,12 @@ exports.getPlans = async (req, res) => {
     const filter = { isActive: true, service };
     if (provider) filter.provider = provider;
 
-    let plans = await ServicePlan.find(filter)
+    const rawPlans = await ServicePlan.find(filter)
       .select('service provider planCode planName description ourPrice prices metadata visibleOnMobile')
       .sort({ provider: 1, ourPrice: 1 })
       .lean();
+
+    let plans = rawPlans;
 
     // Filter to only the active provider's plans (unless a specific provider was requested)
     if (!provider) {
@@ -187,9 +189,23 @@ exports.getPlans = async (req, res) => {
       }
     }
 
-    // Hide plans the admin has switched off on mobile (restricted plan types are
-    // off by default unless the admin turned them on).
-    plans = plans.filter((p) => adminService.planVisibleOnMobile(p));
+    // Hide plans the admin switched off on mobile. For data plans this is fully
+    // authoritative — only explicitly-enabled plans (visibleOnMobile === true) and
+    // their legacy/visible counterparts are shown.
+    const visible = plans.filter((p) => adminService.planVisibleOnMobile(p));
+    const visibleIds = new Set(visible.map((p) => String(p._id)));
+
+    // A plan the admin explicitly enabled must NEVER be dropped, even if the
+    // active-provider filter above excluded it (e.g. an admin enabled a
+    // datastation MTN plan while gladtidings is the active data provider).
+    const explicitlyEnabled = rawPlans.filter((p) => p.visibleOnMobile === true);
+    for (const p of explicitlyEnabled) {
+      if (!visibleIds.has(String(p._id))) {
+        visible.push(p);
+        visibleIds.add(String(p._id));
+      }
+    }
+    plans = visible;
 
     // Resolve the price this user actually sees & pays, based on their
     // membership level (normal / affiliate / top_user / api_user).
