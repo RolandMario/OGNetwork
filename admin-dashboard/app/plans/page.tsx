@@ -79,20 +79,12 @@ function getPlanType(plan: ServicePlan): string {
   return 'Regular';
 }
 
-// Restricted / promotional data plan types. Hidden from the mobile app by
-// default; an admin explicitly toggles them on per plan with the switch.
-const RESTRICTED_PLAN_TYPES = ['gifting', 'corporate gifting', 'corporate', 'awoof', 'sme', 'data share', 'special', 'talkmore', 'night'];
-
-function isRestrictedPlanType(type: string): boolean {
-  const t = String(type || '').trim().toLowerCase();
-  return RESTRICTED_PLAN_TYPES.includes(t);
-}
-
-// Effective "show on mobile" state. An admin's explicit choice wins; otherwise
-// restricted plan types default to hidden, everything else to visible.
+// Effective "show on mobile" state — must mirror the backend planVisibleOnMobile().
+// The admin's explicit switch always wins. Legacy data plans (field unset) default
+// to hidden; cable/electricity default to visible.
 function isVisibleOnMobile(plan: ServicePlan): boolean {
   if (typeof plan.visibleOnMobile === 'boolean') return plan.visibleOnMobile;
-  return !isRestrictedPlanType(getPlanType(plan));
+  return plan.service !== 'data';
 }
 
 // Extract the validity (in days) from a data plan. Checks in order of authority:

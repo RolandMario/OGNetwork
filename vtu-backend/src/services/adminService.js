@@ -36,14 +36,19 @@ function isRestrictedPlanType(type) {
 
 /**
  * Effective mobile visibility for a plan. An admin's explicit choice
- * (visibleOnMobile true/false) wins. If the field was never set (legacy plans),
- * restricted plan types default to HIDDEN and everything else to VISIBLE.
+ * (visibleOnMobile true/false) always wins — that is the single source of truth.
+ *
+ * For legacy plans where the field was never set (created before this feature):
+ *  - Data plans default to HIDDEN (the switch is authoritative, so nothing shows
+ *    unless an admin explicitly turns it on). This fixes data promo/gifting
+ *    plans showing up when only a few were switched on.
+ *  - Cable / electricity plans have no restricted-plan-type concept and have
+ *    always been shown, so they default to VISIBLE.
  * @param {Object} plan - ServicePlan document/lean
  */
 function planVisibleOnMobile(plan) {
   if (typeof plan.visibleOnMobile === 'boolean') return plan.visibleOnMobile;
-  const planType = plan.metadata && plan.metadata.plan_type;
-  return !isRestrictedPlanType(planType);
+  return plan.service !== 'data';
 }
 
 /**
@@ -137,9 +142,9 @@ async function syncDataPlans(ServicePlan, { providerName, AdminConfig } = {}) {
             planCode:      plan.plan_code,
             ourPrice:      providerPrice,
             prices:        initLevelPrices(providerPrice),
-            // Restricted/promotional plans are hidden from mobile by default.
-            // Admin can toggle per-plan via the dashboard.
-            visibleOnMobile: !isRestrictedPlanType(plan.plan_type),
+            // Data plans are hidden from mobile by default — the admin switch is
+            // the single source of truth for what shows on the user's app.
+            visibleOnMobile: false,
             ...update,
           });
           results.synced++;
