@@ -8,6 +8,7 @@ import { useDispatch, useSelector } from 'react-redux';
 
 import { COLORS, SIZES, FONTS, SHADOWS } from '../../constants/theme';
 import TransactionPinModal from '../../components/TransactionPinModal';
+import TransactionSummaryModal from '../../components/TransactionSummaryModal';
 import apiClient from '../../services/api';
 import { API_ROUTES } from '../../constants/apiRoutes';
 import { updateBalance } from '../../redux/slices/walletSlice';
@@ -37,6 +38,7 @@ const BuyCableScreen = ({ navigation }) => {
 
   const [loadingPlans,      setLoadingPlans]      = useState(true);
   const [isVerifying,       setIsVerifying]       = useState(false);
+  const [isSummaryModalVisible, setIsSummaryModalVisible] = useState(false); // NEW
   const [isPinModalVisible, setIsPinModalVisible] = useState(false);
   const [isProcessing,      setIsProcessing]      = useState(false);
   const [pinError,          setPinError]          = useState('');
@@ -133,7 +135,7 @@ const BuyCableScreen = ({ navigation }) => {
   };
 
   // ---------------------------------------------------------------------------
-  // Initiate purchase
+  // Initiate purchase (show SUMMARY modal first)
   // ---------------------------------------------------------------------------
   const initiatePurchase = () => {
     if (!iucNumber || iucNumber.length < 5) {
@@ -156,6 +158,14 @@ const BuyCableScreen = ({ navigation }) => {
       return;
     }
     setPinError('');
+    setIsSummaryModalVisible(true); // CHANGED: Show summary modal first
+  };
+
+  // ---------------------------------------------------------------------------
+  // Summary modal confirmation — proceed to PIN (NEW)
+  // ---------------------------------------------------------------------------
+  const onSummaryConfirm = () => {
+    setIsSummaryModalVisible(false);
     setIsPinModalVisible(true);
   };
 
@@ -361,6 +371,22 @@ const BuyCableScreen = ({ navigation }) => {
           </TouchableOpacity>
         </View>
       )}
+
+      {/* Summary Modal */}
+      <TransactionSummaryModal
+        isVisible={isSummaryModalVisible}
+        onClose={() => setIsSummaryModalVisible(false)}
+        onConfirm={onSummaryConfirm}
+        transaction={{
+          serviceType: 'Cable TV',
+          amount: selectedPlan?.ourPrice || 0,
+          commission: 0,
+          beneficiary: iucNumber,
+          planDetails: selectedPlan?.planName || '',
+          provider: selectedProvider?.toUpperCase() || '',
+          totalAmount: selectedPlan?.ourPrice || 0,
+        }}
+      />
 
       {/* PIN Modal */}
       <TransactionPinModal

@@ -11,6 +11,7 @@ import { COLORS, SIZES, FONTS, SHADOWS } from '../../constants/theme';
 import CustomInput from '../../components/CustomInput';
 import CustomButton from '../../components/CustomButton';
 import TransactionPinModal from '../../components/TransactionPinModal';
+import TransactionSummaryModal from '../../components/TransactionSummaryModal';
 import apiClient from '../../services/api';
 import { API_ROUTES } from '../../constants/apiRoutes';
 import { updateBalance } from '../../redux/slices/walletSlice';
@@ -32,6 +33,7 @@ const BuyElectricityScreen = ({ navigation }) => {
   const [loadingDiscos,   setLoadingDiscos]   = useState(true);
   const [isVerifying,     setIsVerifying]     = useState(false);
   const [isModalVisible,  setModalVisible]    = useState(false);
+  const [isSummaryModalVisible, setIsSummaryModalVisible] = useState(false); // NEW
   const [isPinModalVisible,setIsPinModalVisible] = useState(false);
   const [isProcessing,    setIsProcessing]    = useState(false);
   const [pinError,        setPinError]        = useState('');
@@ -130,7 +132,7 @@ const BuyElectricityScreen = ({ navigation }) => {
   };
 
   // ---------------------------------------------------------------------------
-  // Initiate purchase — validate then open PIN modal
+  // Initiate purchase — validate then open SUMMARY modal (CHANGED)
   // ---------------------------------------------------------------------------
   const initiatePurchase = () => {
     if (!customerInfo) {
@@ -153,6 +155,14 @@ const BuyElectricityScreen = ({ navigation }) => {
     }
 
     setPinError('');
+    setIsSummaryModalVisible(true); // CHANGED: Show summary modal first
+  };
+
+  // ---------------------------------------------------------------------------
+  // Summary modal confirmation — proceed to PIN (NEW)
+  // ---------------------------------------------------------------------------
+  const onSummaryConfirm = () => {
+    setIsSummaryModalVisible(false);
     setIsPinModalVisible(true);
   };
 
@@ -376,6 +386,22 @@ const BuyElectricityScreen = ({ navigation }) => {
           </View>
         </View>
       </Modal>
+
+      {/* Summary Modal */}
+      <TransactionSummaryModal
+        isVisible={isSummaryModalVisible}
+        onClose={() => setIsSummaryModalVisible(false)}
+        onConfirm={onSummaryConfirm}
+        transaction={{
+          serviceType: 'Electricity',
+          amount: Number(amount) || 0,
+          commission: 0,
+          beneficiary: meterNumber,
+          planDetails: `${meterType} - ${selectedDisco?.planName || ''}`,
+          provider: selectedDisco?.provider || '',
+          totalAmount: Number(amount) || 0,
+        }}
+      />
 
       {/* PIN Modal */}
       <TransactionPinModal

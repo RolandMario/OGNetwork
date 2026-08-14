@@ -9,6 +9,7 @@ import { useDispatch, useSelector } from 'react-redux';
 
 import { COLORS, SIZES, FONTS, SHADOWS } from '../../constants/theme';
 import TransactionPinModal from '../../components/TransactionPinModal';
+import TransactionSummaryModal from '../../components/TransactionSummaryModal';
 import apiClient from '../../services/api';
 import { API_ROUTES } from '../../constants/apiRoutes';
 import { updateBalance } from '../../redux/slices/walletSlice';
@@ -184,6 +185,7 @@ const BuyDataScreen = ({ navigation }) => {
   const [phone,             setPhone]             = useState('');
 
   const [loadingPlans,      setLoadingPlans]      = useState(true);
+  const [isSummaryModalVisible, setIsSummaryModalVisible] = useState(false); // NEW: Summary modal state
   const [isPinModalVisible, setIsPinModalVisible] = useState(false);
   const [isProcessing,      setIsProcessing]      = useState(false);
   const [pinError,          setPinError]          = useState('');
@@ -322,6 +324,14 @@ const BuyDataScreen = ({ navigation }) => {
       return;
     }
     setPinError('');
+    setIsSummaryModalVisible(true); // CHANGED: Show summary modal first
+  };
+
+  // ---------------------------------------------------------------------------
+  // Summary modal confirmation — proceed to PIN
+  // ---------------------------------------------------------------------------
+  const onSummaryConfirm = () => {
+    setIsSummaryModalVisible(false);
     setIsPinModalVisible(true);
   };
 
@@ -565,6 +575,22 @@ const BuyDataScreen = ({ navigation }) => {
         </View>
 
       </KeyboardAvoidingView>
+
+      {/* Summary Modal */}
+      <TransactionSummaryModal
+        isVisible={isSummaryModalVisible}
+        onClose={() => setIsSummaryModalVisible(false)}
+        onConfirm={onSummaryConfirm}
+        transaction={{
+          serviceType: 'Data',
+          amount: selectedPlan?.ourPrice || 0,
+          commission: 0, // Data purchases don't have commission
+          beneficiary: phone,
+          planDetails: selectedPlan?.planName || '',
+          provider: selectedPlan?.provider || '',
+          totalAmount: selectedPlan?.ourPrice || 0,
+        }}
+      />
 
       {/* PIN Modal */}
       <TransactionPinModal

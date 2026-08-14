@@ -19,6 +19,7 @@ import { COLORS, SIZES, FONTS, SHADOWS } from '../../constants/theme';
 import CustomInput from '../../components/CustomInput';
 import CustomButton from '../../components/CustomButton';
 import TransactionPinModal from '../../components/TransactionPinModal';
+import TransactionSummaryModal from '../../components/TransactionSummaryModal';
 import apiClient from '../../services/api';
 import { API_ROUTES } from '../../constants/apiRoutes';
 import { updateBalance } from '../../redux/slices/walletSlice';
@@ -47,6 +48,7 @@ const BuyAirtimeScreen = ({ navigation }) => {
   const authUser = useSelector((state) => state.auth.user);
 
   // PIN modal states
+  const [isSummaryModalVisible, setIsSummaryModalVisible] = useState(false); // NEW
   const [isPinModalVisible, setIsPinModalVisible] = useState(false);
   const [isProcessing, setIsProcessing]           = useState(false);
   const [pinError, setPinError]                   = useState('');
@@ -126,7 +128,7 @@ const BuyAirtimeScreen = ({ navigation }) => {
   }, []); // fetch once on mount — network list doesn't change per selection
 
   // ---------------------------------------------------------------------------
-  // Validate then open PIN modal
+  // Validate then open SUMMARY modal (NEW)
   // ---------------------------------------------------------------------------
   const initiatePurchase = () => {
     if (!phone || phone.length !== 11) {
@@ -143,6 +145,14 @@ const BuyAirtimeScreen = ({ navigation }) => {
     }
 
     setPinError('');
+    setIsSummaryModalVisible(true); // CHANGED: Show summary modal first
+  };
+
+  // ---------------------------------------------------------------------------
+  // Summary modal confirmation — proceed to PIN (NEW)
+  // ---------------------------------------------------------------------------
+  const onSummaryConfirm = () => {
+    setIsSummaryModalVisible(false);
     setIsPinModalVisible(true);
   };
 
@@ -331,6 +341,22 @@ const BuyAirtimeScreen = ({ navigation }) => {
           />
         </View>
       </KeyboardAvoidingView>
+
+      {/* Summary Modal */}
+      <TransactionSummaryModal
+        isVisible={isSummaryModalVisible}
+        onClose={() => setIsSummaryModalVisible(false)}
+        onConfirm={onSummaryConfirm}
+        transaction={{
+          serviceType: 'Airtime',
+          amount: Number(amount) || 0,
+          commission: 0,
+          beneficiary: phone,
+          planDetails: selectedNetwork,
+          provider: selectedNetwork.toUpperCase(),
+          totalAmount: Number(amount) || 0,
+        }}
+      />
 
       {/* PIN Modal */}
       <TransactionPinModal
