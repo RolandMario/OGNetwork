@@ -29,7 +29,8 @@ const TransactionSummaryModal = ({
   } = transaction;
 
   const commissionsAmount = commission || 0;
-  const total = totalAmount || (amount + commissionsAmount);
+  // Total amount charged should be the amount (commission is a reward added to user's commission balance)
+  const total = totalAmount || amount;
 
   // Icons for different service types
   const getServiceIcon = () => {
