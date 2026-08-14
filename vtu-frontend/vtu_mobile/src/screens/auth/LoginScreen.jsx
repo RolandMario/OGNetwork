@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useDispatch } from 'react-redux';
 import { useUser } from '../../context/userContext';
 import apiClient from '../../services/api';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   View,
   Text,
@@ -14,6 +15,7 @@ import {
   ScrollView,
   StatusBar,
 } from 'react-native';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, SIZES, FONTS, SHADOWS } from '../../constants/theme';
 import CustomInput from '../../components/CustomInput';
 import CustomButton from '../../components/CustomButton';
@@ -23,11 +25,34 @@ import { loginSuccess, loginFail } from '../../redux/slices/authSlice';
 const LoginScreen = ({ navigation }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [rememberMe, setRememberMe] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const { login } = useUser();
   const dispatch = useDispatch();
 
   const TENANT_ID = 'demo';
+
+  // Load saved credentials on mount
+  useEffect(() => {
+    const loadSavedCredentials = async () => {
+      try {
+        const savedEmail = await AsyncStorage.getItem('loginEmail');
+        const savedPassword = await AsyncStorage.getItem('loginPassword');
+        
+        if (savedEmail) {
+          setEmail(savedEmail);
+          setRememberMe(true);
+        }
+        if (savedPassword) {
+          setPassword(savedPassword);
+        }
+      } catch (error) {
+        console.error('Error loading saved credentials:', error);
+      }
+    };
+
+    loadSavedCredentials();
+  }, []);
 
   const handleLogin = async () => {
     if (!email || !password) {
@@ -43,22 +68,41 @@ const LoginScreen = ({ navigation }) => {
       const response = await apiClient.post(API_ROUTES.AUTH.LOGIN, {
         emailOrPhone: email,
         password,
-             });
-console.log('Login Response:', response.data);
-if (response.data.status === 'success') {
-  const token = response.data.token;
-  const user = response.data.data.user;
+      });
 
-  // Update context (keeps the session in-memory only — nothing is persisted,
-  // so the app requires a fresh login every time it is opened/closed).
-  await login(token, user, null, TENANT_ID);
+      console.log('Login Response:', response.data);
+      if (response.data.status === 'success') {
+        const token = response.data.token;
+        const user = response.data.data.user;
 
-  // Dispatch to Redux
-  dispatch(loginSuccess({ token, user, tenantId: TENANT_ID }));
+        // Save credentials if "Remember Me" is checked
+        if (rememberMe) {
+          try {
+            await AsyncStorage.setItem('loginEmail', email);
+            await AsyncStorage.setItem('loginPassword', password);
+          } catch (error) {
+            console.error('Error saving credentials:', error);
+          }
+        } else {
+          // Clear saved credentials if "Remember Me" is unchecked
+          try {
+            await AsyncStorage.removeItem('loginEmail');
+            await AsyncStorage.removeItem('loginPassword');
+          } catch (error) {
+            console.error('Error clearing credentials:', error);
+          }
+        }
 
-  Alert.alert('Login Successful', 'Welcome to your wallet!');
-  navigation.replace('MainNavigator');
-}
+        // Update context (keeps the session in-memory only — nothing is persisted,
+        // so the app requires a fresh login every time it is opened/closed).
+        await login(token, user, null, TENANT_ID);
+
+        // Dispatch to Redux
+        dispatch(loginSuccess({ token, user, tenantId: TENANT_ID }));
+
+        Alert.alert('Login Successful', 'Welcome to your wallet!');
+        navigation.replace('MainNavigator');
+      }
     } catch (error) {
       // Log full error details for debugging (network errors have no .response)
       console.log('Login Error Full:', {
@@ -125,6 +169,20 @@ if (response.data.status === 'success') {
               onChangeText={setPassword}
               secureTextEntry
             />
+
+            {/* Remember Me Checkbox */}
+            <TouchableOpacity
+              style={styles.rememberMeContainer}
+              onPress={() => setRememberMe(!rememberMe)}
+              activeOpacity={0.7}
+            >
+              <MaterialCommunityIcons
+                name={rememberMe ? 'checkbox-marked' : 'checkbox-blank-outline'}
+                size={20}
+                color={rememberMe ? COLORS.primary : COLORS.textSecondary}
+              />
+              <Text style={styles.rememberMeText}>Remember me</Text>
+            </TouchableOpacity>
 
             <TouchableOpacity style={styles.forgotPasswordContainer}>
               <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
@@ -197,6 +255,17 @@ const styles = StyleSheet.create({
   forgotPasswordText: {
     ...FONTS.medium,
     color: COLORS.primary,
+    fontSize: SIZES.body2,
+  },
+  rememberMeContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: SIZES.padding,
+    gap: 8,
+  },
+  rememberMeText: {
+    ...FONTS.regular,
+    color: COLORS.textPrimary,
     fontSize: SIZES.body2,
   },
   footerContainer: {
