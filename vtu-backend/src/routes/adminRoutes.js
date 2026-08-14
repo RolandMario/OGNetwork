@@ -147,4 +147,23 @@ router.post('/notifications', adminController.sendNotification);
 // Broadcast history (one row per send)
 router.get('/notifications', adminController.getSentNotifications);
 
+// ---------------------------------------------------------------------------
+// Admin Profile & Login Security (OTP-based 2FA)
+// ---------------------------------------------------------------------------
+
+// Get admin profile
+router.get('/profile', adminController.getAdminProfile);
+
+// Send OTP to admin's current email
+router.post('/send-otp', adminController.sendOtp);
+
+// Verify OTP code
+router.post('/verify-otp', adminController.verifyOtp);
+
+// Change admin email (requires verified OTP)
+router.post('/change-email', adminController.changeEmail);
+
+// Change admin password (requires verified OTP)
+router.post('/change-password', adminController.changePassword);
+
 module.exports = router;

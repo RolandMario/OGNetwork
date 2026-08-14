@@ -90,6 +90,29 @@ export default function SettingsPage() {
   const [providerSaved, setProviderSaved] = useState(false);
   const [providerError, setProviderError] = useState<string | null>(null);
 
+  // Admin Login Security state
+  const [profileLoading, setProfileLoading] = useState(true);
+  const [adminProfile, setAdminProfile] = useState<any>(null);
+
+  // Email change state
+  const [emailStep, setEmailStep] = useState<'idle' | 'otp-sent' | 'done'>('idle');
+  const [emailSending, setEmailSending] = useState(false);
+  const [emailOtp, setEmailOtp] = useState('');
+  const [newEmail, setNewEmail] = useState('');
+  const [emailChanging, setEmailChanging] = useState(false);
+  const [emailChanged, setEmailChanged] = useState(false);
+  const [emailError, setEmailError] = useState<string | null>(null);
+
+  // Password change state
+  const [passwordStep, setPasswordStep] = useState<'idle' | 'otp-sent' | 'done'>('idle');
+  const [passwordSending, setPasswordSending] = useState(false);
+  const [passwordOtp, setPasswordOtp] = useState('');
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [passwordChanging, setPasswordChanging] = useState(false);
+  const [passwordChanged, setPasswordChanged] = useState(false);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+
   useEffect(() => {
     if (!localStorage.getItem("adminToken")) {
       router.push("/login");
@@ -98,6 +121,7 @@ export default function SettingsPage() {
     fetchAirtimeProfitConfig();
     fetchProviderConfig();
     fetchCommissionConfig();
+    fetchAdminProfile();
   }, []);
 
   const fetchCommissionConfig = async () => {
@@ -231,6 +255,97 @@ export default function SettingsPage() {
     }
   };
 
+// ---------------------------------------------------------------------------
+  // Admin Login Security handlers
+  // ---------------------------------------------------------------------------
+
+  const fetchAdminProfile = async () => {
+    try {
+      setProfileLoading(true);
+      const data = await fetchWithAuth("/admin/profile");
+      setAdminProfile(data.data.user);
+    } catch (err: any) {
+      console.error("Failed to fetch admin profile:", err.message);
+    } finally {
+      setProfileLoading(false);
+    }
+  };
+
+  const handleSendEmailOtp = async () => {
+    try {
+      setEmailSending(true);
+      setEmailError(null);
+      const data = await fetchWithAuth("/admin/send-otp", {
+        method: "POST",
+        body: JSON.stringify({ action: "change_email" }),
+      });
+      console.log("OTP sent:", data);
+      setEmailStep("otp-sent");
+    } catch (err: any) {
+      setEmailError(err.message);
+    } finally {
+      setEmailSending(false);
+    }
+  };
+
+  const handleChangeEmail = async () => {
+    try {
+      setEmailChanging(true);
+      setEmailError(null);
+      const data = await fetchWithAuth("/admin/change-email", {
+        method: "POST",
+        body: JSON.stringify({ newEmail, otp: emailOtp }),
+      });
+      setEmailChanged(true);
+      setTimeout(() => {
+        setEmailStep("done");
+        setEmailChanged(false);
+      }, 1000);
+      // Update local profile
+      setAdminProfile(data.data.user);
+    } catch (err: any) {
+      setEmailError(err.message);
+    } finally {
+      setEmailChanging(false);
+    }
+  };
+
+  const handleSendPasswordOtp = async () => {
+    try {
+      setPasswordSending(true);
+      setPasswordError(null);
+      const data = await fetchWithAuth("/admin/send-otp", {
+        method: "POST",
+        body: JSON.stringify({ action: "change_password" }),
+      });
+      console.log("OTP sent:", data);
+      setPasswordStep("otp-sent");
+    } catch (err: any) {
+      setPasswordError(err.message);
+    } finally {
+      setPasswordSending(false);
+    }
+  };
+
+  const handleChangePassword = async () => {
+    try {
+      setPasswordChanging(true);
+      setPasswordError(null);
+      await fetchWithAuth("/admin/change-password", {
+        method: "POST",
+        body: JSON.stringify({ currentPassword, newPassword, otp: passwordOtp }),
+      });
+      setPasswordChanged(true);
+      setTimeout(() => {
+        setPasswordStep("done");
+        setPasswordChanged(false);
+      }, 1000);
+    } catch (err: any) {
+      setPasswordError(err.message);
+    } finally {
+      setPasswordChanging(false);
+    }
+  };
   return (
     <div className="max-w-2xl space-y-6">
       <div>
@@ -505,6 +620,221 @@ export default function SettingsPage() {
         </div>
       </div>
 
+{/* Admin Login Security (OTP-based 2FA) */}
+      <div className="bg-white rounded-xl border border-slate-200 p-6">
+        <h2 className="text-lg font-semibold text-slate-900 mb-4">🔐 Admin Login Security</h2>
+        <p className="text-sm text-slate-500 mb-4">
+          Update your admin login credentials. For security, a one-time passcode (OTP) will be sent to your current email for verification.
+        </p>
+
+        {/* Admin Profile Info */}
+        {profileLoading ? (
+          <div className="flex items-center gap-2 text-sm text-slate-500 mb-4 p-3 bg-slate-50 rounded-lg">
+            <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+            Loading profile...
+          </div>
+        ) : (
+          <div className="flex items-center gap-4 p-3 bg-slate-50 rounded-lg mb-4">
+            <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center">
+              <span className="text-white font-bold text-sm">
+                {adminProfile?.fullName?.charAt(0)?.toUpperCase() || 'A'}
+              </span>
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-medium text-slate-900">{adminProfile?.fullName || 'Admin'}</p>
+              <p className="text-xs text-slate-500">{adminProfile?.email || '—'}</p>
+            </div>
+            <span className="px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700 capitalize">
+              {adminProfile?.role || 'admin'}
+            </span>
+          </div>
+        )}
+
+        <div className="border-t border-slate-100 pt-4 space-y-4">
+          {/* Change Email */}
+          <div>
+            <h3 className="text-sm font-medium text-slate-700 mb-2">Change Email Address</h3>
+            <p className="text-xs text-slate-500 mb-3">
+              Current email: <span className="font-medium text-slate-700">{adminProfile?.email || '—'}</span>
+            </p>
+
+            {emailStep === 'idle' && (
+              <button
+                onClick={handleSendEmailOtp}
+                disabled={emailSending}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {emailSending ? (
+                  <span className="flex items-center gap-2">
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Sending OTP...
+                  </span>
+                ) : (
+                  'Send OTP to Current Email'
+                )}
+              </button>
+            )}
+
+            {emailStep === 'otp-sent' && (
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Enter OTP Code</label>
+                  <input
+                    type="text"
+                    value={emailOtp}
+                    onChange={(e) => setEmailOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    placeholder="000000"
+                    maxLength={6}
+                    className="w-32 px-3 py-2 border border-slate-300 rounded-lg text-lg text-center font-bold tracking-widest focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                  />
+                  <p className="text-xs text-slate-400 mt-1">Check your email for the 6-digit code</p>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">New Email Address</label>
+                  <input
+                    type="email"
+                    value={newEmail}
+                    onChange={(e) => setNewEmail(e.target.value)}
+                    placeholder="newadmin@example.com"
+                    className="w-full max-w-sm px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                  />
+                </div>
+                {emailError && (
+                  <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{emailError}</p>
+                )}
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={handleChangeEmail}
+                    disabled={emailChanging || !emailOtp || emailOtp.length < 6 || !newEmail}
+                    className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {emailChanging ? (
+                      <span className="flex items-center gap-2">
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        Updating...
+                      </span>
+                    ) : emailChanged ? (
+                      '✓ Updated'
+                    ) : (
+                      'Verify OTP & Change Email'
+                    )}
+                  </button>
+                  <button
+                    onClick={() => { setEmailStep('idle'); setEmailOtp(''); setNewEmail(''); setEmailError(null); }}
+                    className="px-3 py-2 text-sm text-slate-600 hover:text-slate-900"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {emailStep === 'done' && (
+              <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-3">
+                <p className="text-sm text-green-700 font-medium">✓ Email updated successfully!</p>
+                <p className="text-xs text-green-600 mt-1">Your admin email has been changed.</p>
+              </div>
+            )}
+          </div>
+<div className="border-t border-slate-100 pt-4">
+            {/* Change Password */}
+            <h3 className="text-sm font-medium text-slate-700 mb-2">Change Password</h3>
+            <p className="text-xs text-slate-500 mb-3">
+              Requires OTP verification sent to your current email.
+            </p>
+
+            {passwordStep === 'idle' && (
+              <button
+                onClick={handleSendPasswordOtp}
+                disabled={passwordSending}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {passwordSending ? (
+                  <span className="flex items-center gap-2">
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Sending OTP...
+                  </span>
+                ) : (
+                  'Send OTP to Current Email'
+                )}
+              </button>
+            )}
+
+            {passwordStep === 'otp-sent' && (
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Enter OTP Code</label>
+                  <input
+                    type="text"
+                    value={passwordOtp}
+                    onChange={(e) => setPasswordOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    placeholder="000000"
+                    maxLength={6}
+                    className="w-32 px-3 py-2 border border-slate-300 rounded-lg text-lg text-center font-bold tracking-widest focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                  />
+                  <p className="text-xs text-slate-400 mt-1">Check your email for the 6-digit code</p>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Current Password</label>
+                  <input
+                    type="password"
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                    placeholder="Enter current password"
+                    className="w-full max-w-sm px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">New Password</label>
+                  <input
+                    type="password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="At least 6 characters"
+                    className="w-full max-w-sm px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                  />
+                </div>
+                {passwordError && (
+                  <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{passwordError}</p>
+                )}
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={handleChangePassword}
+                    disabled={passwordChanging || !passwordOtp || passwordOtp.length < 6 || !currentPassword || !newPassword}
+                    className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {passwordChanging ? (
+                      <span className="flex items-center gap-2">
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        Updating...
+                      </span>
+                    ) : passwordChanged ? (
+                      '✓ Updated'
+                    ) : (
+                      'Verify OTP & Change Password'
+                    )}
+                  </button>
+                  <button
+                    onClick={() => { setPasswordStep('idle'); setPasswordOtp(''); setCurrentPassword(''); setNewPassword(''); setPasswordError(null); }}
+                    className="px-3 py-2 text-sm text-slate-600 hover:text-slate-900"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {passwordStep === 'done' && (
+              <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-3">
+                <p className="text-sm text-green-700 font-medium">✓ Password updated successfully!</p>
+                <p className="text-xs text-green-600 mt-1">Your admin password has been changed.</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Danger Zone */}
       {/* Danger Zone */}
       <div className="bg-white rounded-xl border border-red-200 p-6">
         <h2 className="text-lg font-semibold text-red-600 mb-4">Danger Zone</h2>

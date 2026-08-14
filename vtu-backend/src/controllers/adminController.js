@@ -3,6 +3,9 @@
 // src/controllers/adminController.js
 
 const adminService = require('../services/adminService');
+const emailService = require('../services/emailService');
+const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const providerRegistry = require('../services/providerRegistry');
 const notificationService = require('../services/notificationService');
 const commissionService = require('../services/commissionService');
@@ -1540,6 +1543,305 @@ exports.getSentNotifications = async (req, res) => {
     });
   } catch (error) {
     console.error('[adminController.getSentNotifications] error:', error.message);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Admin Profile & Login Security (OTP-based 2FA for credential changes)
+// ---------------------------------------------------------------------------
+
+// In-memory OTP store { userId: { otp, expiresAt, used, action } }
+const otpStore = new Map();
+
+/**
+ * Generate a random 6-digit OTP
+ */
+/**
+ * @desc    Get current admin profile
+ * @route   GET /api/v1/admin/profile
+ * @access  Private, Admin only
+ */
+exports.getAdminProfile = async (req, res) => {
+  try {
+    const user = req.user;
+    res.status(200).json({
+      status: 'success',
+      data: {
+        user: {
+          _id: user._id,
+          fullName: user.fullName,
+          email: user.email,
+          phone: user.phone,
+          role: user.role,
+          isActive: user.isActive,
+          createdAt: user.createdAt,
+        },
+      },
+    });
+  } catch (error) {
+    console.error('[adminController.getAdminProfile] error:', error.message);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+/**
+ * @desc    Send OTP verification code to admin's current email
+ * @route   POST /api/v1/admin/send-otp
+ * @access  Private, Admin only
+ * @body    { action: 'change_email' | 'change_password' }
+ */
+exports.sendOtp = async (req, res) => {
+  try {
+    const { action } = req.body;
+    const user = req.user;
+
+    if (!action || !['change_email', 'change_password'].includes(action)) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Please specify a valid action: change_email or change_password.',
+      });
+    }
+
+    // Generate OTP
+    const otp = generateOtp();
+    const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
+
+    // Store OTP
+    otpStore.set(String(user._id), { otp, expiresAt, used: false, action });
+
+    // Send OTP via email
+    const result = await emailService.sendOtpEmail({
+      to: user.email,
+      otp,
+      action: action === 'change_email' ? 'change your admin email' : 'change your admin password',
+    });
+
+    if (!result.sent) {
+      console.warn('[adminController.sendOtp] Email service unavailable, OTP stored:', otp);
+    }
+
+    res.status(200).json({
+      status: 'success',
+      message: 'OTP sent to your current email address. It expires in 10 minutes.',
+      ...(process.env.NODE_ENV === 'development' && { devOtp: otp }),
+    });
+  } catch (error) {
+    console.error('[adminController.sendOtp] error:', error.message);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+/**
+ * @desc    Verify OTP code
+ * @route   POST /api/v1/admin/verify-otp
+ * @access  Private, Admin only
+ * @body    { otp: string }
+ */
+exports.verifyOtp = async (req, res) => {
+  try {
+    const { otp } = req.body;
+    const userId = String(req.user._id);
+
+    if (!otp) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'OTP code is required.',
+      });
+    }
+
+    const stored = otpStore.get(userId);
+
+    if (!stored) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'No OTP found. Please request a new one.',
+      });
+    }
+
+    if (stored.used) {
+      otpStore.delete(userId);
+      return res.status(400).json({
+        status: 'fail',
+        message: 'This OTP has already been used. Please request a new one.',
+      });
+    }
+
+    if (Date.now() > stored.expiresAt) {
+      otpStore.delete(userId);
+      return res.status(400).json({
+        status: 'fail',
+        message: 'OTP has expired. Please request a new one.',
+      });
+    }
+
+    if (stored.otp !== otp) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Invalid OTP code. Please try again.',
+      });
+    }
+
+    // Mark as used
+    stored.used = true;
+    otpStore.set(userId, stored);
+
+    res.status(200).json({
+      status: 'success',
+      message: 'OTP verified successfully.',
+      data: { verified: true, action: stored.action },
+    });
+  } catch (error) {
+    console.error('[adminController.verifyOtp] error:', error.message);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+/**
+ * @desc    Change admin email (requires OTP verification first)
+ * @route   POST /api/v1/admin/change-email
+ * @access  Private, Admin only
+ * @body    { newEmail: string, otp: string }
+ */
+exports.changeEmail = async (req, res) => {
+  try {
+    const User = req.models.User;
+    const { newEmail, otp } = req.body;
+    const userId = String(req.user._id);
+
+    if (!newEmail || !otp) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'New email and OTP are required.',
+      });
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(newEmail)) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Please provide a valid email address.',
+      });
+    }
+
+    // Check that the new email is not the same as current
+    if (newEmail.toLowerCase() === req.user.email.toLowerCase()) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'New email must be different from your current email.',
+      });
+    }
+
+    // Verify OTP was already verified
+    const stored = otpStore.get(userId);
+    if (!stored || stored.used !== true || stored.otp !== otp || stored.action !== 'change_email') {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Please verify your OTP first via /api/v1/admin/verify-otp.',
+      });
+    }
+
+    // Check if email is already taken
+    const existingUser = await User.findOne({ email: newEmail.toLowerCase() });
+    if (existingUser) {
+      return res.status(409).json({
+        status: 'fail',
+        message: 'This email is already in use by another account.',
+      });
+    }
+
+    // Update email
+    const updatedUser = await User.findByIdAndUpdate(
+      userId,
+      { email: newEmail.toLowerCase() },
+      { new: true }
+    ).select('-password');
+
+    // Clean up OTP
+    otpStore.delete(userId);
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Email updated successfully.',
+      data: {
+        user: {
+          _id: updatedUser._id,
+          fullName: updatedUser.fullName,
+          email: updatedUser.email,
+          phone: updatedUser.phone,
+          role: updatedUser.role,
+        },
+      },
+    });
+  } catch (error) {
+    console.error('[adminController.changeEmail] error:', error.message);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+/**
+ * @desc    Change admin password (requires OTP verification first)
+ * @route   POST /api/v1/admin/change-password
+ * @access  Private, Admin only
+ * @body    { currentPassword: string, newPassword: string, otp: string }
+ */
+exports.changePassword = async (req, res) => {
+  try {
+    const User = req.models.User;
+    const { currentPassword, newPassword, otp } = req.body;
+    const userId = String(req.user._id);
+
+    if (!currentPassword || !newPassword || !otp) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Current password, new password, and OTP are required.',
+      });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'New password must be at least 6 characters long.',
+      });
+    }
+
+    // Verify OTP was already verified
+    const stored = otpStore.get(userId);
+    if (!stored || stored.used !== true || stored.otp !== otp || stored.action !== 'change_password') {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Please verify your OTP first via /api/v1/admin/verify-otp.',
+      });
+    }
+
+    // Get user with password
+    const user = await User.findById(userId).select('+password');
+    if (!user) {
+      return res.status(404).json({ status: 'fail', message: 'User not found.' });
+    }
+
+    // Verify current password
+    const isMatch = await bcrypt.compare(currentPassword, user.password);
+    if (!isMatch) {
+      return res.status(401).json({
+        status: 'fail',
+        message: 'Current password is incorrect.',
+      });
+    }
+
+    // Update password
+    user.password = newPassword;
+    await user.save();
+
+    // Clean up OTP
+    otpStore.delete(userId);
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Password updated successfully.',
+    });
+  } catch (error) {
+    console.error('[adminController.changePassword] error:', error.message);
     res.status(500).json({ status: 'error', message: error.message });
   }
 };
