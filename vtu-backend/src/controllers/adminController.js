@@ -679,6 +679,45 @@ exports.updatePlanLevelPrices = async (req, res) => {
   }
 };
 
+/**
+ * @desc    Toggle whether a plan shows on the user's mobile app
+ * @route   PATCH /api/v1/admin/plans/:id/visibility
+ * @access  Private, Admin only
+ * @body    { visibleOnMobile: boolean }
+ */
+exports.updatePlanVisibility = async (req, res) => {
+  try {
+    const ServicePlan = req.models.ServicePlan;
+    const { id } = req.params;
+    const { visibleOnMobile } = req.body;
+
+    if (visibleOnMobile === undefined || typeof visibleOnMobile !== 'boolean') {
+      return res.status(400).json({
+        status:  'fail',
+        message: 'visibleOnMobile must be a boolean (true = show, false = hide).',
+      });
+    }
+
+    const updated = await adminService.updatePlanVisibility(ServicePlan, id, visibleOnMobile);
+
+    res.status(200).json({
+      status: 'success',
+      data: {
+        planId:          updated._id,
+        planName:        updated.planName,
+        visibleOnMobile: updated.visibleOnMobile,
+      },
+      message: visibleOnMobile ? 'Plan is now visible on mobile.' : 'Plan hidden from mobile.',
+    });
+  } catch (error) {
+    console.error('[adminController.updatePlanVisibility] error:', error.message);
+    res.status(error.message.includes('not found') ? 404 : 400).json({
+      status:  'fail',
+      message: error.message,
+    });
+  }
+};
+
 // ---------------------------------------------------------------------------
 // Bulk update prices
 // ---------------------------------------------------------------------------

@@ -74,6 +74,16 @@ const servicePlanSchema = new mongoose.Schema(
       index: true,
     },
 
+    // Show/hide this plan on the user's mobile app. Independent from isActive:
+    // an admin can hide a plan from mobile while keeping it active in the admin
+    // dashboard. Defaults to true (visible). Restricted/promotional plan types
+    // are set to false (hidden) at sync time and treated as hidden when unset.
+    visibleOnMobile: {
+      type: Boolean,
+      default: true,
+      index: true,
+    },
+
     // Last synced from provider
     lastSyncedAt: {
       type: Date,

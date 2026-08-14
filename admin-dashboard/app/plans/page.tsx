@@ -79,6 +79,22 @@ function getPlanType(plan: ServicePlan): string {
   return 'Regular';
 }
 
+// Restricted / promotional data plan types. Hidden from the mobile app by
+// default; an admin explicitly toggles them on per plan with the switch.
+const RESTRICTED_PLAN_TYPES = ['gifting', 'corporate gifting', 'corporate', 'awoof', 'sme', 'data share', 'special', 'talkmore', 'night'];
+
+function isRestrictedPlanType(type: string): boolean {
+  const t = String(type || '').trim().toLowerCase();
+  return RESTRICTED_PLAN_TYPES.includes(t);
+}
+
+// Effective "show on mobile" state. An admin's explicit choice wins; otherwise
+// restricted plan types default to hidden, everything else to visible.
+function isVisibleOnMobile(plan: ServicePlan): boolean {
+  if (typeof plan.visibleOnMobile === 'boolean') return plan.visibleOnMobile;
+  return !isRestrictedPlanType(getPlanType(plan));
+}
+
 // Extract the validity (in days) from a data plan. Checks in order of authority:
 //  1. plan.metadata            (provider-reported, e.g. "GIFTING - 30")
 //  2. plan.description         (mirrors the metadata description)
@@ -171,6 +187,7 @@ interface ServicePlan {
     api_user: number;
   };
   isActive: boolean;
+  visibleOnMobile?: boolean;
   metadata?: any;
   createdAt: string;
 }
@@ -289,6 +306,39 @@ export default function PlansPage() {
       setSaveMsg("Level prices updated successfully.");
       setTimeout(() => setSaveMsg(null), 3000);
     } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
+  // Toggle a plan's visibility on the mobile app
+  const toggleVisibility = async (plan: ServicePlan) => {
+    const next = !isVisibleOnMobile(plan);
+
+    // Optimistic update
+    setPlans(plans.map(p => p._id === plan._id ? { ...p, visibleOnMobile: next } : p));
+
+    try {
+      const token = localStorage.getItem("adminToken");
+      const tenantId = localStorage.getItem("tenantId") || "demo";
+
+      const res = await fetch(`${API_BASE}/admin/plans/${plan._id}/visibility`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "x-tenant-id": tenantId,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ visibleOnMobile: next }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Failed to update visibility");
+
+      setSaveMsg(next ? `"${plan.planName}" is now shown on mobile.` : `"${plan.planName}" hidden from mobile.`);
+      setTimeout(() => setSaveMsg(null), 3000);
+    } catch (err: any) {
+      // Revert optimistic update on failure
+      setPlans(plans.map(p => p._id === plan._id ? { ...p, visibleOnMobile: undefined } : p));
       alert(err.message);
     }
   };
@@ -556,6 +606,29 @@ export default function PlansPage() {
                       </span>
                     </div>
                   ))}
+                </div>
+
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="text-xs text-slate-500">Show on mobile:</span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={isVisibleOnMobile(plan)}
+                    onClick={() => toggleVisibility(plan)}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                      isVisibleOnMobile(plan) ? "bg-green-500" : "bg-slate-300"
+                    }`}
+                    title={isVisibleOnMobile(plan) ? "Tap to hide from mobile app" : "Tap to show on mobile app"}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                        isVisibleOnMobile(plan) ? "translate-x-6" : "translate-x-1"
+                      }`}
+                    />
+                  </button>
+                  <span className={`text-xs font-medium ${isVisibleOnMobile(plan) ? "text-green-600" : "text-slate-400"}`}>
+                    {isVisibleOnMobile(plan) ? "Visible" : "Hidden"}
+                  </span>
                 </div>
 
                 <div className="flex items-center justify-between">

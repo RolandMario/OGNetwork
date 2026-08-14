@@ -77,6 +77,9 @@ router.patch('/plans/:id', adminController.updatePlanPrice);
 router.get('/plans/:id/prices', adminController.getPlanLevelPrices);
 router.patch('/plans/:id/prices', adminController.updatePlanLevelPrices);
 
+// Mobile visibility switch (show/hide a plan on the user's app)
+router.patch('/plans/:id/visibility', adminController.updatePlanVisibility);
+
 // Bulk update plan prices
 router.post('/plans/bulk-update', adminController.bulkUpdatePrices);
 

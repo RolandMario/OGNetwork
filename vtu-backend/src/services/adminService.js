@@ -8,6 +8,44 @@ const providerRegistry = require('./providerRegistry');
 // User level constants
 const USER_LEVELS = ['normal', 'affiliate', 'top_user', 'api_user'];
 
+// Data plan types that are promotional / restricted offers (Gifting, SME,
+// Talkmore, Corporate, ...) and frequently fail eligibility checks on the user's
+// own number (see the provider "not eligible for this offer" errors). By default
+// these are hidden from the mobile app unless an admin explicitly turns them on.
+const RESTRICTED_PLAN_TYPES = [
+  'gifting',
+  'corporate gifting',
+  'corporate',
+  'awoof',
+  'sme',
+  'data share',
+  'special',
+  'talkmore',
+  'night',
+];
+
+/**
+ * Whether a plan type is a restricted/promotional offer that should be hidden
+ * from the mobile app by default.
+ * @param {string} type - plan_type (e.g. "Gifting", "SME", "Regular")
+ */
+function isRestrictedPlanType(type) {
+  const t = String(type || '').trim().toLowerCase();
+  return RESTRICTED_PLAN_TYPES.includes(t);
+}
+
+/**
+ * Effective mobile visibility for a plan. An admin's explicit choice
+ * (visibleOnMobile true/false) wins. If the field was never set (legacy plans),
+ * restricted plan types default to HIDDEN and everything else to VISIBLE.
+ * @param {Object} plan - ServicePlan document/lean
+ */
+function planVisibleOnMobile(plan) {
+  if (typeof plan.visibleOnMobile === 'boolean') return plan.visibleOnMobile;
+  const planType = plan.metadata && plan.metadata.plan_type;
+  return !isRestrictedPlanType(planType);
+}
+
 /**
  * Initialize level prices from a base price.
  * Sets all levels to the same price initially.
@@ -99,6 +137,9 @@ async function syncDataPlans(ServicePlan, { providerName, AdminConfig } = {}) {
             planCode:      plan.plan_code,
             ourPrice:      providerPrice,
             prices:        initLevelPrices(providerPrice),
+            // Restricted/promotional plans are hidden from mobile by default.
+            // Admin can toggle per-plan via the dashboard.
+            visibleOnMobile: !isRestrictedPlanType(plan.plan_type),
             ...update,
           });
           results.synced++;
@@ -463,6 +504,26 @@ async function updatePlanLevelPrices(ServicePlan, planId, prices) {
 }
 
 /**
+ * Set whether a plan is shown on the user's mobile app (the admin switch).
+ * @param {Object} ServicePlan
+ * @param {string} planId
+ * @param {boolean} visibleOnMobile
+ */
+async function updatePlanVisibility(ServicePlan, planId, visibleOnMobile) {
+  const updated = await ServicePlan.findByIdAndUpdate(
+    planId,
+    { visibleOnMobile: Boolean(visibleOnMobile) },
+    { new: true, runValidators: true }
+  );
+
+  if (!updated) {
+    throw new Error('Plan not found.');
+  }
+
+  return updated;
+}
+
+/**
  * Update a user's level
  */
 async function updateUserLevel(User, userId, level) {
@@ -545,10 +606,13 @@ async function getPlansForUser(ServicePlan, { service, provider, limit = 50 } = 
   if (service) filter.service = service;
   if (provider) filter.provider = provider;
 
-  const plans = await ServicePlan.find(filter)
-    .select('service provider planCode planName description ourPrice metadata')
+  let plans = await ServicePlan.find(filter)
+    .select('service provider planCode planName description ourPrice prices metadata visibleOnMobile')
     .limit(limit)
     .lean();
+
+  // Hide plans the admin has turned off on mobile (restricted types default off)
+  plans = plans.filter((p) => planVisibleOnMobile(p));
 
   return plans;
 }
@@ -559,6 +623,9 @@ async function getPlansForUser(ServicePlan, { service, provider, limit = 50 } = 
 
 module.exports = {
   USER_LEVELS,
+  RESTRICTED_PLAN_TYPES,
+  isRestrictedPlanType,
+  planVisibleOnMobile,
   initLevelPrices,
   syncAllPlans,
   syncDataPlans,
@@ -570,6 +637,7 @@ module.exports = {
   getPlansForUser,
   getPlanLevelPrices,
   updatePlanLevelPrices,
+  updatePlanVisibility,
   updateUserLevel,
   getAirtimeProfitLevels,
   updateAirtimeProfitLevels,

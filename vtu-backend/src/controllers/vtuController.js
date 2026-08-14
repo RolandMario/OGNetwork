@@ -152,7 +152,7 @@ exports.getPlans = async (req, res) => {
     if (provider) filter.provider = provider;
 
     let plans = await ServicePlan.find(filter)
-      .select('service provider planCode planName description ourPrice prices metadata')
+      .select('service provider planCode planName description ourPrice prices metadata visibleOnMobile')
       .sort({ provider: 1, ourPrice: 1 })
       .lean();
 
@@ -186,6 +186,10 @@ exports.getPlans = async (req, res) => {
         console.error('[vtuController.getPlans] provider filter error:', err.message);
       }
     }
+
+    // Hide plans the admin has switched off on mobile (restricted plan types are
+    // off by default unless the admin turned them on).
+    plans = plans.filter((p) => adminService.planVisibleOnMobile(p));
 
     // Resolve the price this user actually sees & pays, based on their
     // membership level (normal / affiliate / top_user / api_user).
@@ -312,7 +316,7 @@ exports.getElectricityPlans = async (req, res) => {
     if (ServicePlan) {
       // Return from DB (with ourPrice)
       let plans = await ServicePlan.find({ service: 'electricity', isActive: true })
-        .select('_id planCode provider planName description ourPrice metadata')
+        .select('_id planCode provider planName description ourPrice metadata visibleOnMobile')
         .sort({ planName: 1 })
         .lean();
 
@@ -333,6 +337,9 @@ exports.getElectricityPlans = async (req, res) => {
       } catch (err) {
         console.error('[vtuController.getElectricityPlans] provider filter error:', err.message);
       }
+
+      // Hide plans the admin switched off on mobile
+      plans = plans.filter((p) => adminService.planVisibleOnMobile(p));
 
       if (plans.length) {
         return res.status(200).json({ status: 'success', data: { plans } });
