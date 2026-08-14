@@ -158,7 +158,7 @@ const BuyElectricityScreen = ({ navigation }) => {
     setPinError('');
 
     try {
-      const resp = await apiClient.get(`${API_ROUTES.VTU.COMMISSION}?service=electricity`);
+      const resp =  apiClient.get(`${API_ROUTES.VTU.COMMISSION}?service=electricity`);
       const rate = resp.data?.data?.rate ?? 0;
       const commissionAmount = Number(amount) * Number(rate) / 100;
 
