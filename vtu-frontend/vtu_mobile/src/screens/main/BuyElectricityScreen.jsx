@@ -135,7 +135,7 @@ const BuyElectricityScreen = ({ navigation }) => {
   // ---------------------------------------------------------------------------
   // Initiate purchase — validate then open SUMMARY modal (CHANGED)
   // ---------------------------------------------------------------------------
-  const initiatePurchase = () => {
+  const initiatePurchase = async () => {
     if (!customerInfo) {
       Alert.alert('Verification Required', 'Please verify your meter number first.');
       return;
@@ -158,7 +158,7 @@ const BuyElectricityScreen = ({ navigation }) => {
     setPinError('');
 
     try {
-      const resp =  apiClient.get(`${API_ROUTES.VTU.COMMISSION}?service=electricity`);
+      const resp = await apiClient.get(`${API_ROUTES.VTU.COMMISSION}?service=electricity`);
       const rate = resp.data?.data?.rate ?? 0;
       const commissionAmount = Number(amount) * Number(rate) / 100;
 

@@ -102,7 +102,7 @@ const TransactionSummaryModal = ({
                   />
                   <Text style={styles.rowLabel}>Provider</Text>
                 </View>
-                <Text style={styles.rowValue}>{provider}</Text>
+                <Text style={styles.rowValue}>{String(provider)}</Text>
               </View>
             )}
 

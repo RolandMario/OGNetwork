@@ -171,7 +171,7 @@ const BuyCableScreen = ({ navigation }) => {
         commission: commissionAmount,
         beneficiary: iucNumber,
         planDetails: selectedPlan?.planName || '',
-        provider: selectedProvider || '',
+        provider: selectedProvider?.name || selectedProvider?.identifier || '',
         totalAmount: (Number(selectedPlan?.ourPrice || 0) + commissionAmount),
       });
     } catch (err) {
@@ -182,7 +182,7 @@ const BuyCableScreen = ({ navigation }) => {
         commission: 0,
         beneficiary: iucNumber,
         planDetails: selectedPlan?.planName || '',
-        provider: selectedProvider || '',
+        provider: selectedProvider?.name || selectedProvider?.identifier || '',
         totalAmount: selectedPlan?.ourPrice || 0,
       });
     }
