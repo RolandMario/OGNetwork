@@ -51,6 +51,7 @@ export default function WalletsPage() {
   const [debitModal, setDebitModal] = useState<{ wallet: Wallet } | null>(null);
   const [modalAmount, setModalAmount] = useState("");
   const [modalNote, setModalNote] = useState("");
+  const [modalPin, setModalPin] = useState(""); // admin transaction PIN — required to authorize direct funding
   const [modalLoading, setModalLoading] = useState(false);
   const [modalMessage, setModalMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
@@ -103,6 +104,10 @@ export default function WalletsPage() {
       setModalMessage({ type: 'error', text: 'Please enter a valid positive amount.' });
       return;
     }
+    if (!modalPin.trim()) {
+      setModalMessage({ type: 'error', text: 'Enter your admin transaction PIN to authorize this funding.' });
+      return;
+    }
     try {
       setModalLoading(true);
       const token = localStorage.getItem("adminToken");
@@ -114,13 +119,14 @@ export default function WalletsPage() {
           "x-tenant-id": tenantId,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ userId: fundModal.wallet.user._id, amount, note: modalNote }),
+        body: JSON.stringify({ userId: fundModal.wallet.user._id, amount, note: modalNote, pin: modalPin }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Failed to fund wallet");
       setModalMessage({ type: 'success', text: data.message });
       setModalAmount("");
       setModalNote("");
+      setModalPin("");
       // Refresh wallets to show updated balance
       fetchWallets();
     } catch (err: any) {
@@ -301,6 +307,17 @@ export default function WalletsPage() {
                 placeholder="Reason for funding"
                 className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm"
               />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Admin Transaction PIN</label>
+              <input
+                type="password"
+                value={modalPin}
+                onChange={(e) => setModalPin(e.target.value)}
+                placeholder="Enter your admin PIN to authorize funding"
+                className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-red-300 focus:border-red-400 outline-none text-sm"
+              />
+              <p className="text-xs text-slate-400 mt-1">Funding is only processed after your transaction PIN is verified.</p>
             </div>
             {modalMessage && (
               <div className={`text-sm p-3 rounded-lg ${

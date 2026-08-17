@@ -289,9 +289,17 @@ export default function PlansPage() {
         throw new Error(data.message || "Failed to update level prices");
       }
 
-      // Update local state with new prices
+      // Update local state with new prices. prices.normal mirrors ourPrice, so
+      // refresh it here too — otherwise the card's "Normal Price" (which reads
+      // prices.normal) would keep showing the previously saved value.
       setPlans(plans.map(p =>
-        p._id === planId ? { ...p, prices: { ...p.prices, ...prices } as LevelPrices } : p
+        p._id === planId
+          ? {
+              ...p,
+              ourPrice: prices.normal ?? p.ourPrice,
+              prices: { ...p.prices, ...prices } as LevelPrices,
+            }
+          : p
       ));
       setShowEditModal(false);
       setEditingPlan(null);
@@ -662,6 +670,13 @@ export default function PlansPage() {
                   prices[level] = Number(input.value);
                 }
               }
+
+              // The "Normal Price" field is the ourPrice input. Mirror it into
+              // prices.normal as well so the level-price endpoint ALSO updates
+              // the value that the dashboard card (and normal-level users) see.
+              // Previously prices.normal was never submitted, so the normal
+              // price never appeared to change after saving.
+              prices.normal = ourPrice;
 
               // Update both ourPrice and level prices
               updatePlan(editingPlan._id, { ourPrice, isActive }).then(() => {

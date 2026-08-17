@@ -7,6 +7,7 @@ const router = express.Router();
 const authMiddleware = require('../middleware/authMiddleware');
 const restrictAdmin = require('../middleware/restrictAdmin');
 const adminController = require('../controllers/adminController');
+const verifyPin = require('../middleware/verifyPin');
 
 // All admin routes require authentication + admin role
 router.use(authMiddleware.protect);
@@ -33,7 +34,10 @@ router.get('/transactions', adminController.getTransactions);
 // Wallets
 // ---------------------------------------------------------------------------
 router.get('/wallets', adminController.getWallets);
-router.post('/wallets/fund', adminController.fundWallet);
+// Direct wallet funding requires the admin's own transaction PIN. verifyPin
+// runs AFTER protect/restrictAdmin, so req.user is the logged-in admin and
+// req.body.pin is validated against that admin account before any credit.
+router.post('/wallets/fund', verifyPin, adminController.fundWallet);
 router.post('/wallets/debit', adminController.debitWallet);
 
 // ---------------------------------------------------------------------------
