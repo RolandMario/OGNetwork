@@ -198,8 +198,10 @@ export default function PlansPage() {
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [serviceFilter, setServiceFilter] = useState("ALL");
+  const [providerFilter, setProviderFilter] = useState("ALL");
   const [networkFilter, setNetworkFilter] = useState("ALL");
   const [planTypeFilter, setPlanTypeFilter] = useState("ALL");
+  const [durationFilter, setDurationFilter] = useState<string | number>("ALL");
   const [editingPlan, setEditingPlan] = useState<ServicePlan | null>(null);
   const [showEditModal, setShowEditModal] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
@@ -400,8 +402,20 @@ export default function PlansPage() {
 
   const services = ["ALL", ...new Set(plans.map(p => p.service))];
 
-  // Data plans — used to power the Network Type + Plan Type filters below.
-  const dataPlans = plans.filter(p => p.service === "data");
+  // Provider options — derived from the provider each plan was synced from.
+  const providers = ["ALL", ...Array.from(new Set(plans.map(p => p.metadata?.syncedFromProvider).filter(Boolean)))];
+
+  // Quick pretty-label for a provider key ("all" -> "ALL API", else capitalized).
+  const formatProviderDisplay = (p: string): string =>
+    p === "ALL" ? "All Providers" : p === "all" ? "ALL API" : p.charAt(0).toUpperCase() + p.slice(1);
+
+  // Data plans — used to power the Network Type + Plan Type + Duration filters.
+  // Respects the active provider filter so the option lists stay relevant.
+  const dataPlans = plans.filter(p =>
+    p.service === "data" &&
+    (providerFilter === "ALL" || (p.metadata?.syncedFromProvider || '') === providerFilter)
+  );
+
   const dataNetworks = Array.from(new Set(dataPlans.map(p => getNetworkFromProvider(p.provider))))
     .filter(n => n !== "other")
     .sort((a, b) => NETWORK_ORDER.indexOf(a) - NETWORK_ORDER.indexOf(b));
@@ -417,13 +431,20 @@ export default function PlansPage() {
       return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
     });
 
-  const filteredPlans = serviceFilter === "data"
-    ? (planTypeFilter === "ALL"
-        ? networkPlans
-        : networkPlans.filter(p => getPlanType(p) === planTypeFilter))
-    : serviceFilter === "ALL"
-      ? plans
-      : plans.filter(p => p.service === serviceFilter);
+  // Duration options — the distinct validities among the provider/network-filtered data plans.
+  const dataDurations = Array.from(new Set(networkPlans.map(p => getDurationDays(p))))
+    .filter((d): d is number => d != null)
+    .sort((a, b) => a - b);
+
+  // Apply every active filter: service type, provider, network, plan type, and duration.
+  const filteredPlans = plans.filter(p => {
+    if (serviceFilter !== "ALL" && p.service !== serviceFilter) return false;
+    if (providerFilter !== "ALL" && (p.metadata?.syncedFromProvider || '') !== providerFilter) return false;
+    if (networkFilter !== "ALL" && getNetworkFromProvider(p.provider) !== networkFilter) return false;
+    if (planTypeFilter !== "ALL" && getPlanType(p) !== planTypeFilter) return false;
+    if (durationFilter !== "ALL" && getDurationDays(p) !== Number(durationFilter)) return false;
+    return true;
+  });
 
   const formatLevelName = (level: string) => {
     return level.replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase());
@@ -436,7 +457,7 @@ export default function PlansPage() {
           <h1 className="text-2xl font-bold text-slate-900">Service Plans</h1>
           <p className="text-sm text-slate-500 mt-1">
             {plans.length} total plans
-            {(serviceFilter !== "ALL" || networkFilter !== "ALL" || planTypeFilter !== "ALL") && ` • ${filteredPlans.length} shown`}
+            {(serviceFilter !== "ALL" || providerFilter !== "ALL" || networkFilter !== "ALL" || planTypeFilter !== "ALL" || durationFilter !== "ALL") && ` • ${filteredPlans.length} shown`}
           </p>
         </div>
         <div className="flex gap-2 flex-wrap justify-end">
@@ -488,7 +509,7 @@ export default function PlansPage() {
         {services.map((s) => (
           <button
             key={s}
-            onClick={() => { setServiceFilter(s); setNetworkFilter("ALL"); setPlanTypeFilter("ALL"); }}
+            onClick={() => { setServiceFilter(s); setNetworkFilter("ALL"); setPlanTypeFilter("ALL"); setDurationFilter("ALL"); }}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
               serviceFilter === s
                 ? "bg-blue-600 text-white"
@@ -499,6 +520,28 @@ export default function PlansPage() {
           </button>
         ))}
       </div>
+
+      {/* Provider Filter */}
+      {providers.length > 1 && (
+        <div className="space-y-2">
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Provider</p>
+          <div className="flex gap-2 flex-wrap">
+            {providers.map((pr) => (
+              <button
+                key={pr}
+                onClick={() => setProviderFilter(pr)}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  providerFilter === pr
+                    ? "bg-slate-800 text-white"
+                    : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-50"
+                }`}
+              >
+                {formatProviderDisplay(pr)}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Data filters: Network Type first, then Plan Type */}
       {serviceFilter === "data" && (
@@ -539,6 +582,27 @@ export default function PlansPage() {
                     }`}
                   >
                     {t === "ALL" ? "All Plan Types" : t}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {!loading && dataDurations.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Duration</p>
+              <div className="flex gap-2 flex-wrap">
+                {["ALL", ...dataDurations.map(String)].map((d) => (
+                  <button
+                    key={d}
+                    onClick={() => setDurationFilter(d === "ALL" ? "ALL" : Number(d))}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                      String(durationFilter) === d
+                        ? "bg-indigo-600 text-white"
+                        : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    {d === "ALL" ? "All Durations" : getDurationLabel(Number(d))}
                   </button>
                 ))}
               </div>

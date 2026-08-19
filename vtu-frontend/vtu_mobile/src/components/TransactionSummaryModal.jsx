@@ -8,6 +8,7 @@ import {
   ScrollView,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS, SIZES, FONTS } from '../constants/theme';
 
 const TransactionSummaryModal = ({
@@ -16,6 +17,8 @@ const TransactionSummaryModal = ({
   onConfirm,
   transaction,
 }) => {
+  const insets = useSafeAreaInsets();
+
   if (!transaction) return null;
 
   const {
@@ -50,7 +53,7 @@ const TransactionSummaryModal = ({
       onRequestClose={onClose}
       statusBarTranslucent
     >
-      <View style={styles.container}>
+      <View style={[styles.container, { paddingTop: Math.max(insets.top, 40) }]}>
         {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity onPress={onClose} style={styles.closeButton}>
@@ -160,7 +163,7 @@ const TransactionSummaryModal = ({
         </ScrollView>
 
         {/* Footer Buttons */}
-        <View style={styles.footer}>
+        <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 16) }]}>
           <TouchableOpacity
             onPress={onClose}
             style={styles.cancelButton}
@@ -184,7 +187,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#fff',
-    paddingTop: 40,
   },
   header: {
     flexDirection: 'row',

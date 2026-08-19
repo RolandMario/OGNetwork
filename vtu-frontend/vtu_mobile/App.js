@@ -7,6 +7,7 @@ import AppNavigator from './src/navigation/AppNavigator'
 import { UserProvider } from './src/context/userContext';
 import { navigationRef } from './src/navigation/navigationRef';
 import useAutoLogout from './src/hooks/useAutoLogout';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import store from './src/redux/store';
 
 const Stack = createNativeStackNavigator();
@@ -20,14 +21,16 @@ const AutoLogoutHandler = () => {
 
 const App = () => {
   return (
-    <ReduxProvider store={store}>
-      <UserProvider>
-        <AutoLogoutHandler />
-        <NavigationContainer ref={navigationRef}>
-          <AppNavigator/>
-        </NavigationContainer>
-      </UserProvider>
-    </ReduxProvider>
+    <SafeAreaProvider>
+      <ReduxProvider store={store}>
+        <UserProvider>
+          <AutoLogoutHandler />
+          <NavigationContainer ref={navigationRef}>
+            <AppNavigator/>
+          </NavigationContainer>
+        </UserProvider>
+      </ReduxProvider>
+    </SafeAreaProvider>
   );
 };
 

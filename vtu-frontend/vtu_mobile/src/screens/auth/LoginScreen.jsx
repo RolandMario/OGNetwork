@@ -25,6 +25,7 @@ import { loginSuccess, loginFail } from '../../redux/slices/authSlice';
 const LoginScreen = ({ navigation }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const { login } = useUser();
@@ -167,7 +168,21 @@ const LoginScreen = ({ navigation }) => {
               placeholder="Your secure password"
               value={password}
               onChangeText={setPassword}
-              secureTextEntry
+              secureTextEntry={!showPassword}
+              icon={
+                <TouchableOpacity
+                  onPress={() => setShowPassword(!showPassword)}
+                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                  style={styles.passwordToggle}
+                  activeOpacity={0.7}
+                >
+                  <MaterialCommunityIcons
+                    name={showPassword ? 'eye-off' : 'eye'}
+                    size={22}
+                    color={COLORS.textSecondary}
+                  />
+                </TouchableOpacity>
+              }
             />
 
             {/* Remember Me Checkbox */}
@@ -247,6 +262,11 @@ const styles = StyleSheet.create({
     paddingTop: SIZES.padding * 2,
     marginTop: -SIZES.padding,
     ...SHADOWS.medium,
+  },
+  passwordToggle: {
+    padding: 4,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   forgotPasswordContainer: {
     alignSelf: 'flex-end',

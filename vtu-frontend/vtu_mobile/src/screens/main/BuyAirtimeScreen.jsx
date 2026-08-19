@@ -23,6 +23,7 @@ import TransactionSummaryModal from '../../components/TransactionSummaryModal';
 import apiClient from '../../services/api';
 import { API_ROUTES } from '../../constants/apiRoutes';
 import { updateBalance } from '../../redux/slices/walletSlice';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // Network colors mapped client-side — Peyflex doesn't provide them
 const NETWORK_COLORS = {
@@ -37,6 +38,7 @@ const PRESET_AMOUNTS = ['100', '200', '500', '1000', '2000'];
 const BuyAirtimeScreen = ({ navigation }) => {
   const dispatch = useDispatch();
   const walletBalance = useSelector((state) => state.wallet.balance);
+  const insets = useSafeAreaInsets();
 
   const [networks, setNetworks]               = useState([]);
   const [selectedNetwork, setSelectedNetwork] = useState('mtn');
@@ -361,7 +363,7 @@ const BuyAirtimeScreen = ({ navigation }) => {
         </ScrollView>
 
         {/* Footer */}
-        <View style={styles.footer}>
+        <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, SIZES.padding) }]}>
           <CustomButton
             label={`Pay ₦${amount || '0.00'}`}
             onPress={initiatePurchase}

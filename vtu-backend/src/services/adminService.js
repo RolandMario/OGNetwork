@@ -77,82 +77,82 @@ function initLevelPrices(basePrice) {
 async function syncDataPlans(ServicePlan, { providerName, AdminConfig } = {}) {
   const results = { synced: 0, updated: 0, skipped: 0, errors: [] };
 
-  // Determine which provider to use
-  let provider;
-  if (providerName) {
-    const { PROVIDERS } = providerRegistry;
-    provider = PROVIDERS[providerName];
-    if (!provider) {
-      results.errors.push(`Unknown provider: ${providerName}`);
-      return results;
-    }
-  } else {
-    provider = await providerRegistry.getProvider('data', AdminConfig);
+  // Resolve the provider(s) to sync from. When the configured provider is
+  // "ALL API", sync from every VTU API in ALL_API_PROVIDERS so all of them
+  // become active in the service plans.
+  let providers;
+  try {
+    providers = await providerRegistry.getProvidersForService('data', AdminConfig, providerName);
+  } catch (err) {
+    results.errors.push(err.message);
+    return results;
   }
 
-  const providerLabel = provider.name || providerName || 'unknown';
-  console.log(`[adminService] Syncing DATA plans from provider: ${providerLabel}...`);
-  const dataNetworks = await provider.getDataNetworks();
-  const dataNetworkList = dataNetworks?.networks || [];
+  for (const provider of providers) {
+    const providerLabel = provider.name || 'unknown';
+    console.log(`[adminService] Syncing DATA plans from provider: ${providerLabel}...`);
+    const dataNetworks = await provider.getDataNetworks();
+    const dataNetworkList = dataNetworks?.networks || [];
 
-  for (const network of dataNetworkList) {
-    try {
-      console.log(`[adminService] Fetching data plans for network: ${network.identifier}`);
-      const plansResponse = await provider.getDataPlans(network.identifier);
-      const plans = plansResponse?.plans || [];
-      console.log(`[adminService] Got ${plans.length} data plans for ${network.identifier}`);
+    for (const network of dataNetworkList) {
+      try {
+        console.log(`[adminService] Fetching data plans for network: ${network.identifier}`);
+        const plansResponse = await provider.getDataPlans(network.identifier);
+        const plans = plansResponse?.plans || [];
+        console.log(`[adminService] Got ${plans.length} data plans for ${network.identifier}`);
 
-      for (const plan of plans) {
-        const providerPrice = Number(plan.amount) > 0 ? Number(plan.amount) : 0;
+        for (const plan of plans) {
+          const providerPrice = Number(plan.amount) > 0 ? Number(plan.amount) : 0;
 
-        // Fields we always refresh on sync (provider data + active-provider tag).
-        // NOTE: we deliberately do NOT touch `ourPrice` or `prices` for existing
-        // plans, so admin price edits made in the dashboard are preserved.
-        const update = {
-          planName:      plan.label || plan.plan_code,
-          description:   plan.description || plan.label,
-          providerPrice,
-          metadata:      {
-            label:               plan.label || plan.plan_code,
-            description:         plan.description || plan.label,
-            plan_type:           plan.plan_type || '',
-            validity:            plan.validity || '',
-            syncedFromProvider:  providerLabel,
-          },
-          lastSyncedAt:  new Date(),
-          isActive:      true,
-        };
+          // Fields we always refresh on sync (provider data + active-provider tag).
+          // NOTE: we deliberately do NOT touch `ourPrice` or `prices` for existing
+          // plans, so admin price edits made in the dashboard are preserved.
+          const update = {
+            planName:      plan.label || plan.plan_code,
+            description:   plan.description || plan.label,
+            providerPrice,
+            metadata:      {
+              label:               plan.label || plan.plan_code,
+              description:         plan.description || plan.label,
+              plan_type:           plan.plan_type || '',
+              validity:            plan.validity || '',
+              syncedFromProvider:  providerLabel,
+            },
+            lastSyncedAt:  new Date(),
+            isActive:      true,
+          };
 
-        const existing = await ServicePlan.findOne({
-          service:  'data',
-          provider: network.identifier,
-          planCode: plan.plan_code,
-        });
-
-        if (existing) {
-          // Existing plan — refresh provider data + tag it as the active
-          // provider's plan so it is returned by GET /vtu/plans.
-          await ServicePlan.updateOne({ _id: existing._id }, { $set: update });
-          results.updated++;
-        } else {
-          // Brand-new plan
-          await ServicePlan.create({
-            service:       'data',
-            provider:      network.identifier,
-            planCode:      plan.plan_code,
-            ourPrice:      providerPrice,
-            prices:        initLevelPrices(providerPrice),
-            // Data plans are hidden from mobile by default — the admin switch is
-            // the single source of truth for what shows on the user's app.
-            visibleOnMobile: false,
-            ...update,
+          const existing = await ServicePlan.findOne({
+            service:  'data',
+            provider: network.identifier,
+            planCode: plan.plan_code,
           });
-          results.synced++;
+
+          if (existing) {
+            // Existing plan — refresh provider data + tag it as the active
+            // provider's plan so it is returned by GET /vtu/plans.
+            await ServicePlan.updateOne({ _id: existing._id }, { $set: update });
+            results.updated++;
+          } else {
+            // Brand-new plan
+            await ServicePlan.create({
+              service:       'data',
+              provider:      network.identifier,
+              planCode:      plan.plan_code,
+              ourPrice:      providerPrice,
+              prices:        initLevelPrices(providerPrice),
+              // Data plans are hidden from mobile by default — the admin switch is
+              // the single source of truth for what shows on the user's app.
+              visibleOnMobile: false,
+              ...update,
+            });
+            results.synced++;
+          }
         }
+      } catch (err) {
+        console.error(`[adminService] DATA sync error for ${network.identifier}:`, err.message);
+        results.errors.push(`DATA network ${network.identifier}: ${err.message}`);
       }
-    } catch (err) {
-      console.error(`[adminService] DATA sync error for ${network.identifier}:`, err.message);
-      results.errors.push(`DATA network ${network.identifier}: ${err.message}`);
     }
   }
 
@@ -169,58 +169,56 @@ async function syncDataPlans(ServicePlan, { providerName, AdminConfig } = {}) {
 async function syncCablePlans(ServicePlan, { providerName, AdminConfig } = {}) {
   const results = { synced: 0, skipped: 0, errors: [] };
 
-  // Determine which provider to use
-  let provider;
-  if (providerName) {
-    const { PROVIDERS } = providerRegistry;
-    provider = PROVIDERS[providerName];
-    if (!provider) {
-      results.errors.push(`Unknown provider: ${providerName}`);
-      return results;
-    }
-  } else {
-    provider = await providerRegistry.getProvider('cable', AdminConfig);
+  // Resolve the provider(s) to sync from — supports "ALL API" (all VTU APIs).
+  let providers;
+  try {
+    providers = await providerRegistry.getProvidersForService('cable', AdminConfig, providerName);
+  } catch (err) {
+    results.errors.push(err.message);
+    return results;
   }
 
-  const providerLabel = provider.name || providerName || 'unknown';
-  console.log(`[adminService] Syncing CABLE plans from provider: ${providerLabel}...`);
-  const cableProviders = await provider.getCableProviders();
-  const cableProviderList = cableProviders?.providers || [];
+  for (const provider of providers) {
+    const providerLabel = provider.name || 'unknown';
+    console.log(`[adminService] Syncing CABLE plans from provider: ${providerLabel}...`);
+    const cableProviders = await provider.getCableProviders();
+    const cableProviderList = cableProviders?.providers || [];
 
-  for (const cableProv of cableProviderList) {
-    try {
-      const plansResponse = await provider.getCablePlans(cableProv.identifier);
-      const plans = plansResponse?.plans || [];
+    for (const cableProv of cableProviderList) {
+      try {
+        const plansResponse = await provider.getCablePlans(cableProv.identifier);
+        const plans = plansResponse?.plans || [];
 
-      for (const plan of plans) {
-        const existing = await ServicePlan.findOne({
-          service:  'cable',
-          provider: cableProv.identifier,
-          planCode: plan.plan_code,
-        });
-
-        if (existing) {
-          results.skipped++;
-        } else {
-          const providerPrice = Number(plan.amount);
-          await ServicePlan.create({
-            service:       'cable',
-            provider:      cableProv.identifier,
-            planCode:      plan.plan_code,
-            planName:      plan.display || plan.plan_code,
-            description:   plan.description,
-            providerPrice: providerPrice,
-            ourPrice:      providerPrice,
-            prices:        initLevelPrices(providerPrice),
-            metadata:      { display: plan.display, description: plan.description, syncedFromProvider: providerLabel },
-            lastSyncedAt:  new Date(),
-            _providerData: plan,
+        for (const plan of plans) {
+          const existing = await ServicePlan.findOne({
+            service:  'cable',
+            provider: cableProv.identifier,
+            planCode: plan.plan_code,
           });
-          results.synced++;
+
+          if (existing) {
+            results.skipped++;
+          } else {
+            const providerPrice = Number(plan.amount);
+            await ServicePlan.create({
+              service:       'cable',
+              provider:      cableProv.identifier,
+              planCode:      plan.plan_code,
+              planName:      plan.display || plan.plan_code,
+              description:   plan.description,
+              providerPrice: providerPrice,
+              ourPrice:      providerPrice,
+              prices:        initLevelPrices(providerPrice),
+              metadata:      { display: plan.display, description: plan.description, syncedFromProvider: providerLabel },
+              lastSyncedAt:  new Date(),
+              _providerData: plan,
+            });
+            results.synced++;
+          }
         }
+      } catch (err) {
+        results.errors.push(`CABLE provider ${cableProv.identifier}: ${err.message}`);
       }
-    } catch (err) {
-      results.errors.push(`CABLE provider ${cableProv.identifier}: ${err.message}`);
     }
   }
 
@@ -237,98 +235,96 @@ async function syncCablePlans(ServicePlan, { providerName, AdminConfig } = {}) {
 async function syncElectricityPlans(ServicePlan, { providerName, AdminConfig } = {}) {
   const results = { synced: 0, updated: 0, skipped: 0, errors: [] };
 
-  // Determine which provider to use
-  let provider;
-  if (providerName) {
-    const { PROVIDERS } = providerRegistry;
-    provider = PROVIDERS[providerName];
-    if (!provider) {
-      results.errors.push(`Unknown provider: ${providerName}`);
-      return results;
-    }
-  } else {
-    provider = await providerRegistry.getProvider('electricity', AdminConfig);
+  // Resolve the provider(s) to sync from — supports "ALL API" (all VTU APIs).
+  let providers;
+  try {
+    providers = await providerRegistry.getProvidersForService('electricity', AdminConfig, providerName);
+  } catch (err) {
+    results.errors.push(err.message);
+    return results;
   }
 
-  const providerLabel = provider.name || providerName || 'unknown';
-  console.log(`[adminService] Syncing ELECTRICITY plans from provider: ${providerLabel}...`);
-  try {
-    const electricityResponse = await provider.getElectricityPlans();
-    const electricityPlans = electricityResponse?.plans || [];
+  for (const provider of providers) {
+    const providerLabel = provider.name || 'unknown';
+    console.log(`[adminService] Syncing ELECTRICITY plans from provider: ${providerLabel}...`);
+    try {
+      const electricityResponse = await provider.getElectricityPlans();
+      const electricityPlans = electricityResponse?.plans || [];
 
-    for (const plan of electricityPlans) {
-      // Use the disco identifier as the provider field (e.g., 'ikeja-electric')
-      const discoIdentifier = plan.provider || plan.identifier || plan.plan_code || 'electricity';
+      for (const plan of electricityPlans) {
+        // Use the disco identifier as the provider field (e.g., 'ikeja-electric')
+        const discoIdentifier = plan.provider || plan.identifier || plan.plan_code || 'electricity';
 
-      const existing = await ServicePlan.findOne({
-        service:  'electricity',
-        provider: discoIdentifier,
-        planCode: plan.plan_code,
-      });
-
-      if (existing) {
-        // The ServicePlan unique index is { service, provider, planCode }, so a
-        // disco-plan key can exist only once across ALL VTU providers. Some
-        // providers share the same disco slugs AND numeric disco_ids (e.g.
-        // datastation 1-11 and geodnatech 1-12), so without this re-tag the
-        // second provider's plans would all be skipped and only DISCOs unique to
-        // it (e.g. geodnatech's Aba Electric = 12) would ever be stored.
-        if (existing.metadata?.syncedFromProvider === providerLabel) {
-          // Same provider already owns this plan — leave admin pricing untouched.
-          results.skipped++;
-        } else {
-          // The plan key exists but belongs to a different VTU provider —
-          // re-tag it to the CURRENT active provider so the electricity plans
-          // endpoint shows it. Prices (ourPrice/prices) are preserved so no
-          // admin customization is lost.
-          await ServicePlan.updateOne(
-            { _id: existing._id },
-            {
-              $set: {
-                planName:    plan.plan_name,
-                description: plan.plan_name,
-                providerPrice: Number(plan.min_amount),
-                metadata: {
-                  ...(existing.metadata || {}),
-                  plan_name:         plan.plan_name,
-                  min_amount:        plan.min_amount,
-                  max_amount:        plan.max_amount,
-                  type:              'prepaid',
-                  syncedFromProvider: providerLabel,
-                },
-                lastSyncedAt: new Date(),
-                _providerData: plan,
-              },
-            }
-          );
-          results.updated++;
-        }
-      } else {
-        const providerPrice = Number(plan.min_amount);
-        await ServicePlan.create({
-          service:       'electricity',
-          provider:      discoIdentifier,
-          planCode:      plan.plan_code,
-          planName:      plan.plan_name,
-          description:   plan.plan_name,
-          providerPrice: providerPrice,
-          ourPrice:      providerPrice,
-          prices:        initLevelPrices(providerPrice),
-          metadata:      {
-            plan_name:  plan.plan_name,
-            min_amount: plan.min_amount,
-            max_amount: plan.max_amount,
-            type:       'prepaid',
-            syncedFromProvider: providerLabel,
-          },
-          lastSyncedAt: new Date(),
-          _providerData: plan,
+        const existing = await ServicePlan.findOne({
+          service:  'electricity',
+          provider: discoIdentifier,
+          planCode: plan.plan_code,
         });
-        results.synced++;
+
+        if (existing) {
+          // The ServicePlan unique index is { service, provider, planCode }, so a
+          // disco-plan key can exist only once across ALL VTU providers. Some
+          // providers share the same disco slugs AND numeric disco_ids (e.g.
+          // datastation 1-11 and geodnatech 1-12), so without this re-tag the
+          // second provider's plans would all be skipped and only DISCOs unique to
+          // it (e.g. geodnatech's Aba Electric = 12) would ever be stored.
+          if (existing.metadata?.syncedFromProvider === providerLabel) {
+            // Same provider already owns this plan — leave admin pricing untouched.
+            results.skipped++;
+          } else {
+            // The plan key exists but belongs to a different VTU provider —
+            // re-tag it to the CURRENT active provider so the electricity plans
+            // endpoint shows it. Prices (ourPrice/prices) are preserved so no
+            // admin customization is lost.
+            await ServicePlan.updateOne(
+              { _id: existing._id },
+              {
+                $set: {
+                  planName:    plan.plan_name,
+                  description: plan.plan_name,
+                  providerPrice: Number(plan.min_amount),
+                  metadata: {
+                    ...(existing.metadata || {}),
+                    plan_name:         plan.plan_name,
+                    min_amount:        plan.min_amount,
+                    max_amount:        plan.max_amount,
+                    type:              'prepaid',
+                    syncedFromProvider: providerLabel,
+                  },
+                  lastSyncedAt: new Date(),
+                  _providerData: plan,
+                },
+              }
+            );
+            results.updated++;
+          }
+        } else {
+          const providerPrice = Number(plan.min_amount);
+          await ServicePlan.create({
+            service:       'electricity',
+            provider:      discoIdentifier,
+            planCode:      plan.plan_code,
+            planName:      plan.plan_name,
+            description:   plan.plan_name,
+            providerPrice: providerPrice,
+            ourPrice:      providerPrice,
+            prices:        initLevelPrices(providerPrice),
+            metadata:      {
+              plan_name:  plan.plan_name,
+              min_amount: plan.min_amount,
+              max_amount: plan.max_amount,
+              type:       'prepaid',
+              syncedFromProvider: providerLabel,
+            },
+            lastSyncedAt: new Date(),
+            _providerData: plan,
+          });
+          results.synced++;
+        }
       }
+    } catch (err) {
+      results.errors.push(`ELECTRICITY (${providerLabel}): ${err.message}`);
     }
-  } catch (err) {
-    results.errors.push(`ELECTRICITY: ${err.message}`);
   }
 
   return results;

@@ -41,13 +41,17 @@ interface ProviderMap {
   electricity: string;
 }
 
-const AVAILABLE_PROVIDERS = ['peyflex', 'gladtidings', 'datastation', 'geodnatech'];
+const AVAILABLE_PROVIDERS = ['peyflex', 'gladtidings', 'datastation', 'geodnatech', 'all'];
 const SERVICE_LABELS: Record<string, string> = {
   airtime: 'Airtime',
   data: 'Data',
   cable: 'Cable TV',
   electricity: 'Electricity',
 };
+
+// Pretty label for a provider key ("all" -> "ALL API", otherwise capitalized).
+const formatProviderName = (p: string): string =>
+  p === 'all' ? 'ALL API' : p.charAt(0).toUpperCase() + p.slice(1);
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -379,7 +383,7 @@ export default function SettingsPage() {
                 >
                   {AVAILABLE_PROVIDERS.map(p => (
                     <option key={p} value={p}>
-                      {p.charAt(0).toUpperCase() + p.slice(1)}
+                      {formatProviderName(p)}
                     </option>
                   ))}
                 </select>

@@ -13,6 +13,7 @@ import TransactionSummaryModal from '../../components/TransactionSummaryModal';
 import apiClient from '../../services/api';
 import { API_ROUTES } from '../../constants/apiRoutes';
 import { updateBalance } from '../../redux/slices/walletSlice';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -173,6 +174,7 @@ function getDurationLabel(days) {
 const BuyDataScreen = ({ navigation }) => {
   const dispatch      = useDispatch();
   const walletBalance = useSelector((state) => state.wallet.balance);
+  const insets = useSafeAreaInsets();
   const authUser      = useSelector((state) => state.auth.user);
 
   // Networks are always the 4 canonical ones (MTN, Airtel, GLO, 9mobile).
@@ -587,7 +589,7 @@ const BuyDataScreen = ({ navigation }) => {
         </View>
 
         {/* Footer */}
-        <View style={styles.footer}>
+        <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 20) }]}>
           <TouchableOpacity
             style={[
               styles.buyButton,

@@ -163,7 +163,8 @@ exports.getPlans = async (req, res) => {
       try {
         const providerMap = await providerRegistry.getProviderMap(req.models.AdminConfig);
         const activeProvider = providerMap[service];
-        if (activeProvider) {
+        // "ALL API" — every synced provider's plans are active, so keep them all.
+        if (activeProvider && activeProvider !== providerRegistry.ALL_API_KEY) {
           const activePlans = plans.filter(
             (p) => p.metadata?.syncedFromProvider === activeProvider
           );
@@ -366,7 +367,8 @@ exports.getElectricityPlans = async (req, res) => {
       try {
         const providerMap = await providerRegistry.getProviderMap(req.models.AdminConfig);
         const activeProvider = providerMap.electricity;
-        if (activeProvider) {
+        // "ALL API" — every synced provider's electricity plans are active.
+        if (activeProvider && activeProvider !== providerRegistry.ALL_API_KEY) {
           const activePlans = plans.filter(
             (p) => p.metadata?.syncedFromProvider === activeProvider
           );

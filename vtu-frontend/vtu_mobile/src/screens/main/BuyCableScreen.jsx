@@ -12,6 +12,7 @@ import TransactionSummaryModal from '../../components/TransactionSummaryModal';
 import apiClient from '../../services/api';
 import { API_ROUTES } from '../../constants/apiRoutes';
 import { updateBalance } from '../../redux/slices/walletSlice';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -28,6 +29,7 @@ const PROVIDER_COLORS = {
 const BuyCableScreen = ({ navigation }) => {
   const dispatch      = useDispatch();
   const walletBalance = useSelector((state) => state.wallet.balance);
+  const insets = useSafeAreaInsets();
 
   const [allPlans,          setAllPlans]          = useState([]);
   const [providers,         setProviders]         = useState([]);
@@ -380,7 +382,7 @@ const BuyCableScreen = ({ navigation }) => {
 
       {/* Footer */}
       {selectedPlan && (
-        <View style={styles.footer}>
+        <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom + 20, 40) }]}>
           <View>
             <Text style={styles.totalLabel}>Total to Pay</Text>
             <Text style={styles.totalAmount}>₦{Number(selectedPlan.ourPrice).toLocaleString()}</Text>
@@ -452,7 +454,7 @@ const styles = StyleSheet.create({
   planPrice:           { ...FONTS.bold, fontSize: 16, color: '#2ECC71' },
   planTextActive:      { color: '#fff' },
   emptyText:           { textAlign: 'center', color: 'rgba(255,255,255,0.7)', marginTop: 20 },
-  footer:              { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: '#fff', padding: 20, borderTopWidth: 1, borderTopColor: '#eee', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', elevation: 20 },
+  footer:              { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: '#fff', padding: 40, paddingTop: 20, borderTopWidth: 1, borderTopColor: '#eee', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', elevation: 20 },
   totalLabel:          { fontSize: 12, color: '#888' },
   totalAmount:         { ...FONTS.bold, fontSize: 22, color: '#333' },
   payButton:           { flexDirection: 'row', paddingVertical: 14, paddingHorizontal: 30, borderRadius: 30, alignItems: 'center', gap: 8 },

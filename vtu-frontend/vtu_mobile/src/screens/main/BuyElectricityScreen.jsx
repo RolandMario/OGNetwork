@@ -15,6 +15,7 @@ import TransactionSummaryModal from '../../components/TransactionSummaryModal';
 import apiClient from '../../services/api';
 import { API_ROUTES } from '../../constants/apiRoutes';
 import { updateBalance } from '../../redux/slices/walletSlice';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // ---------------------------------------------------------------------------
 // Component
@@ -22,6 +23,7 @@ import { updateBalance } from '../../redux/slices/walletSlice';
 const BuyElectricityScreen = ({ navigation }) => {
   const dispatch      = useDispatch();
   const walletBalance = useSelector((state) => state.wallet.balance);
+  const insets = useSafeAreaInsets();
 
   const [discos,          setDiscos]          = useState([]);
   const [selectedDisco,   setSelectedDisco]   = useState(null);
@@ -370,7 +372,7 @@ const BuyElectricityScreen = ({ navigation }) => {
       </ScrollView>
 
       {/* Footer */}
-      <View style={styles.footer}>
+      <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, SIZES.padding) }]}>
         <CustomButton
           label="Purchase Token"
           onPress={initiatePurchase}
