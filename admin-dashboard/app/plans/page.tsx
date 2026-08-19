@@ -23,6 +23,19 @@ function getNetworkFromProvider(provider: string): string {
   return 'other';
 }
 
+// Distinct text color per provider — makes each provider name easy to tell
+// apart at a glance on the plan cards.
+function getProviderColorClass(provider: string): string {
+  const key = String(provider || '').toLowerCase();
+  switch (key) {
+    case "datastation": return "text-blue-600";
+    case "gladtidings": return "text-purple-600";
+    case "geodnatech":  return "text-emerald-600";
+    case "peyflex":     return "text-amber-600";
+    default:            return "text-slate-600";
+  }
+}
+
 // Pretty-print a network identifier for the filter chips.
 function formatNetworkName(network: string): string {
   const n = String(network || '').toLowerCase();
@@ -624,6 +637,11 @@ export default function PlansPage() {
           ) : (
             filteredPlans.map((plan) => (
               <div key={plan._id} className="bg-white rounded-xl border border-slate-200 p-5 hover:shadow-md transition-shadow">
+                <div className="mb-2">
+                  <span className={`text-xs font-bold uppercase tracking-wide ${getProviderColorClass(plan.metadata?.syncedFromProvider || plan.provider)}`}>
+                    {formatProviderDisplay(plan.metadata?.syncedFromProvider || plan.provider)}
+                  </span>
+                </div>
                 <div className="flex items-start justify-between mb-3">
                   <div>
                     <h3 className="font-semibold text-slate-900">{plan.planName}</h3>
