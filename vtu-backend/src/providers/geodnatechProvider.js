@@ -8,7 +8,7 @@
 // Base URL: https://geodnatech.com/api
 
 const axios = require('axios');
-const { createApiClient, getNetworkCode, successResponse, extractErrorMessage, extractProviderMessage, isSuccessResponse } = require('./baseProvider');
+const { createApiClient, getNetworkCode, successResponse, extractErrorMessage, extractProviderMessage, isSuccessResponse, describeHttpError } = require('./baseProvider');
 
 const API_KEY = process.env.GEODNATECH_API_KEY;
 const BASE_URL = process.env.GEODNATECH_BASE_URL || 'https://geodnatech.com/api';
@@ -272,7 +272,7 @@ async function verifyCableIUC({ iuc, identifier }) {
     });
     return response.data;
   } catch (error) {
-    throw new Error(`[geodnatech] verifyCableIUC: ${extractErrorMessage(error, 'IUC verification failed')}`);
+    throw new Error(`[geodnatech] verifyCableIUC: ${extractErrorMessage(error, 'IUC verification failed')}${describeHttpError(error)}`);
   }
 }
 

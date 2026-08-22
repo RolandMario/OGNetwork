@@ -7,7 +7,7 @@
 // Base URL: https://www.gladtidingsdata.com/api
 
 const axios = require('axios');
-const { createApiClient, getNetworkCode, successResponse, extractErrorMessage, isSuccessResponse } = require('./baseProvider');
+const { createApiClient, getNetworkCode, successResponse, extractErrorMessage, isSuccessResponse, describeHttpError } = require('./baseProvider');
 
 const API_KEY = process.env.GLADTIDINGS_API_KEY;
 const BASE_URL = process.env.GLADTIDINGS_BASE_URL;
@@ -252,7 +252,7 @@ async function verifyCableIUC({ iuc, identifier }) {
     });
     return response.data;
   } catch (error) {
-    throw new Error(`[gladtidings] verifyCableIUC: ${extractErrorMessage(error, 'IUC verification failed')}`);
+    throw new Error(`[gladtidings] verifyCableIUC: ${extractErrorMessage(error, 'IUC verification failed')}${describeHttpError(error)}`);
   }
 }
 

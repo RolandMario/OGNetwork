@@ -168,6 +168,33 @@ function isSuccessResponse(data) {
   return false;
 }
 
+/**
+ * Build a short human-readable suffix describing an axios HTTP error:
+ *  e.g. " (HTTP 500 @ /validateiuc/) (body: {...})"
+ * Used to enrich provider error messages so the real cause of an upstream
+ * failure is visible instead of a bare "Request failed with status code N".
+ * @param {*} error - The thrown error (usually an axios error)
+ * @returns {string} Empty string when there's no HTTP response to describe
+ */
+function describeHttpError(error) {
+  if (!error || !error.response) return '';
+  const status = error.response.status;
+  const path = error.config?.url || '';
+  const body = error.response.data;
+
+  let text = '';
+  if (status) text += `HTTP ${status}`;
+  if (path) text += (text ? ' ' : '') + `@ ${path}`;
+
+  if (body !== undefined && body !== null) {
+    let raw = typeof body === 'string' ? body : JSON.stringify(body);
+    if (raw && raw.length > 300) raw = `${raw.slice(0, 300)}...`;
+    if (raw) text += (text ? ' — ' : '') + `body: ${raw}`;
+  }
+
+  return text ? ` (${text})` : '';
+}
+
 module.exports = {
   createApiClient,
   getNetworkCode,
@@ -175,5 +202,6 @@ module.exports = {
   extractErrorMessage,
   extractProviderMessage,
   isSuccessResponse,
+  describeHttpError,
   DEFAULT_NETWORK_MAP,
 };

@@ -7,7 +7,7 @@
 // Base URL: https://datastationapi.com/api
 
 const axios = require('axios');
-const { createApiClient, getNetworkCode, successResponse, extractErrorMessage, extractProviderMessage, isSuccessResponse } = require('./baseProvider');
+const { createApiClient, getNetworkCode, successResponse, extractErrorMessage, extractProviderMessage, isSuccessResponse, describeHttpError } = require('./baseProvider');
 
 const API_KEY = process.env.DATASTATION_API_KEY;
 const BASE_URL = process.env.DATASTATION_BASE_URL;
@@ -271,7 +271,7 @@ async function verifyCableIUC({ iuc, identifier }) {
     });
     return response.data;
   } catch (error) {
-    throw new Error(`[datastation] verifyCableIUC: ${extractErrorMessage(error, 'IUC verification failed')}`);
+    throw new Error(`[datastation] verifyCableIUC: ${extractErrorMessage(error, 'IUC verification failed')}${describeHttpError(error)}`);
   }
 }
 

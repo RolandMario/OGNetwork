@@ -311,6 +311,78 @@ function getAvailableProviders() {
 }
 
 // ---------------------------------------------------------------------------
+// Cable IUC verification (resilient)
+// ---------------------------------------------------------------------------
+
+// Preferred order for cable IUC verification once the configured provider(s)
+// have been tried. Verification is a read-only lookup, so it is safe to fall
+// through to another provider if the configured one is down (e.g. upstream
+// HTTP 500 / 404 on its /validateiuc-style endpoint).
+const CABLE_VERIFY_PREFERENCE = ['peyflex', 'datastation', 'gladtidings', 'geodnatech'];
+
+/**
+ * Verify a cable IUC with provider failover.
+ * Tries the configured cable provider(s) first (a single provider, or the
+ * "ALL API" aggregate). If they all fail, falls back through every other
+ * cable-capable provider in CABLE_VERIFY_PREFERENCE.
+ *
+ * Verification is read-only, so this never risks a double charge — unlike
+ * purchases (subscribeCable), which are intentionally NOT failed over.
+ *
+ * @param {Object} args - { iuc, identifier }
+ * @param {Object} [AdminConfig] - The AdminConfig model (from req.models)
+ * @returns {Promise<{ provider: string, result: Object }>}
+ * @throws {Error} if every provider fails (includes the last real error)
+ */
+async function verifyCableIUCWithFallback({ iuc, identifier }, AdminConfig = null) {
+  // 1) Resolve the configured provider(s) for cable.
+  let attempts = [];
+  try {
+    attempts = (await getProvidersForService('cable', AdminConfig)).filter(
+      (p) => typeof p.verifyCableIUC === 'function'
+    );
+  } catch (err) {
+    console.warn('[providerRegistry] Could not resolve configured cable provider(s):', err.message);
+    attempts = [];
+  }
+
+  // 2) Add every other cable-capable provider as a fallback. When the
+  //    "ALL API" aggregate is configured it already tried datastation,
+  //    gladtidings and geodnatech internally, so skip those members.
+  const hasAggregate = attempts.some((p) => p.name === ALL_API_KEY);
+  for (const name of CABLE_VERIFY_PREFERENCE) {
+    if (hasAggregate && ALL_API_PROVIDERS.includes(name)) continue; // aggregate already tried it
+    const provider = PROVIDERS[name];
+    if (!provider || attempts.some((p) => p.name === provider.name)) continue;
+    if (typeof provider.verifyCableIUC !== 'function') continue;
+    attempts.push(provider);
+  }
+
+  if (!attempts.length) {
+    throw new Error('No cable provider available to verify IUC.');
+  }
+
+  // 3) Try each provider in order; surface the real last error if all fail.
+  let lastErr = null;
+  for (const provider of attempts) {
+    try {
+      const result = await provider.verifyCableIUC({ iuc, identifier });
+      return { provider: provider.name || 'unknown', result };
+    } catch (err) {
+      lastErr = err;
+      console.warn(
+        `[providerRegistry] IUC verify via "${provider.name || 'unknown'}" failed: ${err.message}`
+      );
+    }
+  }
+
+  throw new Error(
+    `IUC verification failed for all ${attempts.length} provider(s). ` +
+    `Last error: ${lastErr?.message || 'unknown error'}`
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Exports
 // ---------------------------------------------------------------------------
 
@@ -322,6 +394,7 @@ module.exports = {
   resetProviderMap,
   getAvailableProviders,
   loadProviderMap,
+  verifyCableIUCWithFallback,
   VALID_PROVIDER_NAMES,
   ALL_API_KEY,
   ALL_API_PROVIDERS,

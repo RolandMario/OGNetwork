@@ -335,11 +335,24 @@ exports.verifyCableIUC = async (req, res) => {
     if (!iuc || !identifier) {
       return res.status(400).json({ status: 'fail', message: 'iuc and identifier are required.' });
     }
-    const provider = await providerRegistry.getProvider('cable', req.models.AdminConfig);
-    const data = await provider.verifyCableIUC({ iuc, identifier });
-    res.status(200).json({ status: 'success', data });
+    // Resilient verification — tries the configured cable provider first, then
+    // fails over to every other cable-capable provider (read-only lookup).
+    const attempt = await providerRegistry.verifyCableIUCWithFallback(
+      { iuc, identifier },
+      req.models.AdminConfig
+    );
+    res.status(200).json({
+      status: 'success',
+      data: { ...attempt.result, _provider: attempt.provider },
+    });
   } catch (error) {
-    res.status(500).json({ status: 'error', message: error.message });
+    // Log the FULL error chain (which provider failed and why), not just a
+    // bare axios "Request failed with status code N" string.
+    console.error(
+      '[vtuController.verifyCableIUC] error:',
+      error instanceof Error ? error.stack || error.message : error
+    );
+    res.status(500).json({ status: 'error', message: error.message || 'IUC verification failed.' });
   }
 };
 

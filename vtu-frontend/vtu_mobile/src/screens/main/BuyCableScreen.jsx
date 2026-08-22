@@ -130,8 +130,19 @@ const BuyCableScreen = ({ navigation }) => {
         setCustomerName(name);
       }
     } catch (err) {
-      console.error('[BuyCable] IUC verify error:', err.message);
-      Alert.alert('Verification Failed', err.response?.data?.message || 'Could not verify IUC. Please try again.');
+      // err.message alone is just "Request failed with status code 500" — the
+      // actual cause (which provider failed + upstream HTTP status) is in the
+      // backend response body, so log that too.
+      const backendMsg = err.response?.data?.message;
+      const status = err.response?.status;
+      console.error(
+        '[BuyCable] IUC verify error:',
+        JSON.stringify({ status, message: backendMsg, axiosMessage: err.message, url: err.config?.url })
+      );
+      Alert.alert(
+        'Verification Failed',
+        backendMsg || 'Could not verify IUC. Please try again.'
+      );
     } finally {
       setIsVerifying(false);
     }
