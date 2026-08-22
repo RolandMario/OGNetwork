@@ -13,6 +13,7 @@ export const API_ROUTES = {
     UPDATE_PROFILE:     '/user/profile/update',
     UPDATE_PASSWORD:    '/user/update-password',
     TRANSACTION_HISTORY:'/user/transactions/my-history',
+    TRANSACTION_DETAIL: (id) => `/user/transactions/${id}`,
   },
   WALLET: {
     GET_BALANCE:          '/user/wallet/balance',

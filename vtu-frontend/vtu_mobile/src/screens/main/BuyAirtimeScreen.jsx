@@ -211,11 +211,9 @@ const BuyAirtimeScreen = ({ navigation }) => {
           dispatch(updateBalance(response.data.data.newBalance));
         }
 
-        Alert.alert(
-          '✅ Transaction Successful',
-          `₦${amount} ${selectedNetwork.toUpperCase()} airtime sent to ${phone}`,
-          [{ text: 'OK', onPress: () => navigation.goBack() }]
-        );
+        // Generate + open the shareable receipt; the screen fetches the
+        // canonical transaction record from the backend by id.
+        navigation.replace('Receipt', { transactionId: response.data.data?.id });
       }
     } catch (error) {
       console.error('[BuyAirtime] Purchase error:', error.response?.data || error.message);

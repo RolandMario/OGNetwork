@@ -251,6 +251,36 @@ exports.getTransactions = async (req, res) => {
   }
 };
 
+/**
+ * @desc    Get a single transaction (admin receipt view)
+ * @route   GET /api/v1/admin/transactions/:id
+ * @access  Private, Admin only
+ */
+exports.getTransactionById = async (req, res) => {
+  try {
+    const Transaction = req.models.Transaction;
+
+    const transaction = await Transaction.findById(req.params.id)
+      .populate('user', 'fullName email phone')
+      .lean();
+
+    if (!transaction) {
+      return res.status(404).json({
+        status:  'fail',
+        message: 'Transaction not found.',
+      });
+    }
+
+    res.status(200).json({
+      status: 'success',
+      data: { transaction },
+    });
+  } catch (error) {
+    console.error('[adminController.getTransactionById] error:', error.message);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
 // ---------------------------------------------------------------------------
 // Wallets
 // ---------------------------------------------------------------------------

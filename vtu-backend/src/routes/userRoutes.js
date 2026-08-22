@@ -42,6 +42,8 @@ router.patch('/profile/update',          userController.updateProfile);
 // Transactions
 // ---------------------------------------------------------------------------
 router.get('/transactions/my-history', transactionController.getMyHistory);
+// Single transaction (receipt) — scoped to the logged-in user
+router.get('/transactions/:id', transactionController.getTransactionById);
 
 // ---------------------------------------------------------------------------
 // Push Notifications

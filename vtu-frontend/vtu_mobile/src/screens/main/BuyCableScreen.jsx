@@ -236,11 +236,8 @@ const BuyCableScreen = ({ navigation }) => {
           dispatch(updateBalance(response.data.data.newBalance));
         }
 
-        Alert.alert(
-          '✅ Subscription Successful',
-          `${selectedProvider.name} ${selectedPlan.planName} activated for IUC ${iucNumber}`,
-          [{ text: 'OK', onPress: () => navigation.goBack() }]
-        );
+        // Generate + open the shareable receipt
+        navigation.replace('Receipt', { transactionId: response.data.data?.id });
       }
 
     } catch (error) {

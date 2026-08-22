@@ -138,6 +138,9 @@ router.delete('/config/manual-transfer-accounts/:id', adminController.deleteManu
 // Get pending manual funding transactions
 router.get('/transactions/manual-funding', adminController.getPendingManualFunding);
 
+// Single transaction (receipt) — admin view
+router.get('/transactions/:id', adminController.getTransactionById);
+
 // Approve a manual funding transaction (credit wallet)
 router.post('/wallets/approve-manual-funding', adminController.approveManualFunding);
 

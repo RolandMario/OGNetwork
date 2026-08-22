@@ -14,6 +14,7 @@ import BuyAirtimeScreen from '../screens/main/BuyAirtimeScreen';
 import BuyDataScreen from '../screens/main/BuyDataScreen';
 import BuyCableScreen from '../screens/main/BuyCableScreen';
 import BuyElectricityScreen from '../screens/main/BuyElectricityScreen';
+import ReceiptScreen from '../screens/main/ReceiptScreen';
 import EditProfileScreen from '../screens/main/EditProfileScreen';
 import UpdatePinScreen from '../screens/main/UpdatePinScreen';
 import SetupPinScreen from '../screens/main/SetupPinScreen';
@@ -44,6 +45,7 @@ const AppNavigator = () => {
       <Stack.Screen name="BuyData" component={BuyDataScreen} />
       <Stack.Screen name="BuyCable" component={BuyCableScreen} />
       <Stack.Screen name="BuyElectricity" component={BuyElectricityScreen} />
+      <Stack.Screen name="Receipt" component={ReceiptScreen} />
 
 
       <Stack.Screen name="EditProfile" component={EditProfileScreen} />

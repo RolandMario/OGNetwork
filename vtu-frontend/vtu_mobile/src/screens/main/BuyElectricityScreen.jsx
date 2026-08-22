@@ -221,13 +221,8 @@ const BuyElectricityScreen = ({ navigation }) => {
           dispatch(updateBalance(response.data.data.newBalance));
         }
 
-        const token = response.data.data?.token || 'Check your meter for the token';
-
-        Alert.alert(
-          '✅ Electricity Purchase Successful',
-          `Meter: ${meterNumber}\nToken: ${token}\nAmount: ₦${Number(amount).toLocaleString()}`,
-          [{ text: 'OK', onPress: () => navigation.goBack() }]
-        );
+        // Generate + open the receipt (token is included on the receipt)
+        navigation.replace('Receipt', { transactionId: response.data.data?.id });
       }
 
     } catch (error) {

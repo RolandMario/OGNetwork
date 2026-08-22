@@ -566,6 +566,7 @@ exports.buyAirtime = async (req, res) => {
       status:  'success',
       message: `₦${amount} airtime sent to ${mobile_number}`,
       data: {
+        id:            txData.transaction._id,
         reference:     txData.reference,
         network,
         mobile_number,
@@ -667,6 +668,7 @@ exports.buyData = async (req, res) => {
       status:  'success',
       message: `Data bundle sent to ${mobile_number}`,
       data: {
+        id:            txData.transaction._id,
         reference:     txData.reference,
         network,
         plan_code,
@@ -767,13 +769,14 @@ exports.subscribeCable = async (req, res) => {
       status:  'success',
       message: `${identifier.toUpperCase()} ${dbPlan.planName} subscription successful for IUC ${iuc}`,
       data: {
-        reference:  txData.reference,
+        id:          txData.transaction._id,
+        reference:   txData.reference,
         identifier,
         plan,
-        planName:   dbPlan.planName,
+        planName:    dbPlan.planName,
         iuc,
-        amount:     userPrice,
-        newBalance: txData.newBalance / 100,
+        amount:      userPrice,
+        newBalance:  txData.newBalance / 100,
       },
     });
 
@@ -975,15 +978,16 @@ exports.buyElectricity = async (req, res) => {
       status:  'success',
       message: `Electricity purchase successful for meter ${meter}`,
       data: {
-        reference:  txData.reference,
+        id:           txData.transaction._id,
+        reference:    txData.reference,
         plan,
-        planName:   dbPlan.planName,
+        planName:     dbPlan.planName,
         meter,
-        amount:     chargeAmount,
-        token:      providerResponse.token || providerResponse.providerTxId,
-        newBalance: txData.newBalance / 100,
-        provider:   purchasedViaProvider || primaryProvider.name,
-        providerRef: providerResponse.providerTxId || providerResponse.reference,
+        amount:       chargeAmount,
+        token:        providerResponse.token || providerResponse.providerTxId,
+        newBalance:   txData.newBalance / 100,
+        provider:     purchasedViaProvider || primaryProvider.name,
+        providerRef:  providerResponse.providerTxId || providerResponse.reference,
       },
     });
 

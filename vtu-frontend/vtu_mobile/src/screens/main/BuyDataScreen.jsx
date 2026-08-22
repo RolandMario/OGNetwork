@@ -395,11 +395,8 @@ const BuyDataScreen = ({ navigation }) => {
           dispatch(updateBalance(response.data.data.newBalance)); // balance is in Naira
         }
 
-        Alert.alert(
-          '✅ Data Purchase Successful',
-          `${selectedPlan.planName} sent to ${phone}`,
-          [{ text: 'OK', onPress: () => navigation.goBack() }]
-        );
+        // Generate + open the receipt
+        navigation.replace('Receipt', { transactionId: response.data.data?.id });
       }
 
     } catch (error) {

@@ -130,7 +130,11 @@ const TransactionHistoryScreen = ({ navigation }) => {
     const title      = getTransactionTitle(item);
 
     return (
-      <TouchableOpacity style={styles.card} activeOpacity={0.7}>
+      <TouchableOpacity
+        style={styles.card}
+        activeOpacity={0.7}
+        onPress={() => navigation.navigate('Receipt', { transaction: item })}
+      >
         {/* Icon */}
         <View style={[styles.iconBox, { backgroundColor: icon.bg }]}>
           <MaterialCommunityIcons name={icon.name} size={22} color={icon.color} />
