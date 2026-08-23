@@ -17,7 +17,6 @@ interface Transaction {
   transactionReference: string;
   type: string;
   amount: number;
-  profit?: number;
   status: string;
   user: UserInfo | string;
   details?: any;
@@ -127,7 +126,6 @@ function buildRows(tx: Transaction) {
   if (d.provider) rows.push({ label: "VTU Provider", value: d.provider });
 
   rows.push({ label: "Amount", value: formatNaira(tx.amount) });
-  if (tx.profit && tx.profit > 0) rows.push({ label: "Profit", value: formatNaira(tx.profit) });
   if (d.failureReason) rows.push({ label: "Note", value: d.failureReason });
   if (tx.newBalance != null) rows.push({ label: "Wallet Balance After", value: formatNaira(tx.newBalance) });
 
