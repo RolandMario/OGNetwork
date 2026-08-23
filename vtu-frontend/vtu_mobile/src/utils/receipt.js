@@ -34,6 +34,27 @@ export function formatReceiptDate(isoStr) {
   });
 }
 
+/** Pretty network label for airtime/data: 'mtn' → 'MTN', '9mobile' → '9mobile', etc. */
+export function formatNetworkLabel(network) {
+  const n = String(network || '').toLowerCase();
+  if (n === 'mtn') return 'MTN';
+  if (n === 'glo') return 'GLO';
+  if (n === 'airtel') return 'Airtel';
+  if (n === '9mobile') return '9mobile';
+  if (!n) return '—';
+  return n.charAt(0).toUpperCase() + n.slice(1);
+}
+
+/** Pretty cable provider label: 'dstv' → 'DSTV', 'gotv' → 'GOtv', 'startime(s)' → 'StarTimes'. */
+export function formatCableProviderLabel(provider) {
+  const p = String(provider || '').toLowerCase();
+  if (p.startsWith('dstv')) return 'DSTV';
+  if (p.startsWith('gotv')) return 'GOtv';
+  if (p.startsWith('startime')) return 'StarTimes';
+  if (!p) return '—';
+  return p.toUpperCase();
+}
+
 // ---------------------------------------------------------------------------
 // Transaction → readable mapping
 // ---------------------------------------------------------------------------
@@ -96,7 +117,7 @@ export function getReceiptTitle(tx) {
  */
 export function buildReceiptRows({ transaction, user } = {}) {
   const tx = transaction || {};
-  const { type, details = {}, amount, status = 'PENDING', profit = 0, newBalance } = tx;
+  const { type, details = {}, amount, status = 'PENDING', newBalance } = tx;
   const u = user || tx.user || {};
 
   const rows = [];
@@ -106,16 +127,23 @@ export function buildReceiptRows({ transaction, user } = {}) {
   rows.push({ label: 'Description', value: getReceiptTitle(tx) || '—' });
 
   if (type === 'AIRTIME') {
-    rows.push({ label: 'Network', value: String(details.network || '—').toUpperCase() });
+    rows.push({ label: 'Network', value: formatNetworkLabel(details.network) });
     rows.push({ label: 'Phone Number', value: details.beneficiary || '—' });
   } else if (type === 'DATA') {
+    rows.push({ label: 'Network', value: formatNetworkLabel(details.network) });
     rows.push({ label: 'Plan', value: details.planName || details.planId || '—' });
     rows.push({ label: 'Beneficiary', value: details.beneficiary || '—' });
   } else if (type === 'CABLE') {
+    rows.push({ label: 'Provider', value: formatCableProviderLabel(details.network || details.cableProvider) });
     rows.push({ label: 'Plan', value: details.planName || details.planId || '—' });
     rows.push({ label: 'IUC Number', value: details.beneficiary || '—' });
   } else if (type === 'ELECTRICITY') {
-    rows.push({ label: 'Plan', value: details.planName || '—' });
+    // For electricity the DISCO (e.g. 'Ikeja Electric') is the provider; the
+    // network slug is kept as the plan reference.
+    rows.push({ label: 'Provider', value: details.planName || (details.network ? formatNetworkLabel(details.network) : '—') });
+    if (details.planId || (details.network && !details.planName)) {
+      rows.push({ label: 'DISCO', value: details.planId || details.network });
+    }
     rows.push({ label: 'Meter Number', value: details.beneficiary || '—' });
     rows.push({ label: 'Meter Type', value: String(details.meterType || '—').toUpperCase() });
     if (details.token) rows.push({ label: 'Buy Token', value: details.token });
@@ -138,9 +166,6 @@ export function buildReceiptRows({ transaction, user } = {}) {
   rows.push({ label: 'Amount Paid', value: formatNaira(amount) });
   if (type === 'COMMISSION' || type === 'FUNDING' || type === 'MANUAL_FUNDING' || type === 'ADMIN_CREDIT') {
     rows.push({ label: 'Amount Credited', value: formatNaira(amount) });
-  }
-  if (profit > 0) {
-    rows.push({ label: 'Commission Earned', value: formatNaira(profit) });
   }
   if (details.failureReason) {
     rows.push({ label: 'Note', value: details.failureReason });

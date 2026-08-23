@@ -512,7 +512,14 @@ exports.syncPlans = async (req, res) => {
       });
     }
 
-    const results = await adminService.syncAllPlans(ServicePlan, { AdminConfig });
+    const results = await adminService.syncAllPlans(ServicePlan, {
+      AdminConfig,
+      providerName: req.body?.providerName,
+      // Data is synced from ALL VTU providers so the admin catalog always includes
+      // datastation, gladtidings AND geodnatech data plans (the mobile app still
+      // filters to the active data provider via getPlans).
+      dataProviderName: req.body?.dataProviderName || 'all',
+    });
 
     res.status(200).json({
       status: 'success',
@@ -802,7 +809,11 @@ exports.syncDataPlans = async (req, res) => {
     if (!ServicePlan) {
       return res.status(500).json({ status: 'error', message: 'ServicePlan model not found.' });
     }
-    const results = await adminService.syncDataPlans(ServicePlan, { AdminConfig });
+    // Data is synced from ALL VTU providers so the admin catalog always has
+    // datastation, gladtidings AND geodnatech data plans, not just the single
+    // active data provider (which left geodnatech with no synced data).
+    const providerName = req.body?.providerName || 'all';
+    const results = await adminService.syncDataPlans(ServicePlan, { AdminConfig, providerName });
     res.status(200).json({
       status: 'success',
       data: results,

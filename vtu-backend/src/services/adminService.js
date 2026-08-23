@@ -129,8 +129,19 @@ async function syncDataPlans(ServicePlan, { providerName, AdminConfig } = {}) {
           });
 
           if (existing) {
-            // Existing plan — refresh provider data + tag it as the active
-            // provider's plan so it is returned by GET /vtu/plans.
+            // Existing plan — refresh provider data. When a plan already belongs
+            // to another provider (e.g. the same plan code exists on datastation
+            // and geodnatech), KEEP the original owner's tag instead of flipping
+            // it to whichever provider iterated last. This prevents an "ALL API"
+            // data sync from silently re-tagging the active provider's plans
+            // (which would break the mobile app's active-provider filter).
+            if (existing.metadata?.syncedFromProvider && existing.metadata.syncedFromProvider !== providerLabel) {
+              update.metadata = {
+                ...existing.metadata,
+                ...update.metadata,
+                syncedFromProvider: existing.metadata.syncedFromProvider,
+              };
+            }
             await ServicePlan.updateOne({ _id: existing._id }, { $set: update });
             results.updated++;
           } else {
@@ -335,15 +346,23 @@ async function syncElectricityPlans(ServicePlan, { providerName, AdminConfig } =
 // ---------------------------------------------------------------------------
 
 /**
- * Fetch all plans from Peyflex providers and save/update in ServicePlan collection
+ * Fetch all plans from the VTU providers and save/update in ServicePlan collection.
  * @param {Object} ServicePlan — the mongoose model (from tenant connection)
- * @returns {Object} { synced: number, skipped: number, errors: Array }
+ * @param {Object} [options]
+ * @param {string} [options.providerName] - Provider to sync ALL services from (defaults to configured providers).
+ * @param {string} [options.dataProviderName] - Optional override for the DATA service only.
+ *   Defaults to 'all' so the admin catalog always includes datastation, gladtidings
+ *   AND geodnatech data plans (previously only the single active data provider's
+ *   plans were imported — e.g. switching the active data provider to geodnatech
+ *   then showed an empty/never-synced data set).
+ * @param {Object} [options.AdminConfig]
+ * @returns {Object} { synced, updated, skipped, errors }
  */
-async function syncAllPlans(ServicePlan, { providerName, AdminConfig } = {}) {
+async function syncAllPlans(ServicePlan, { providerName, dataProviderName, AdminConfig } = {}) {
   const results = { synced: 0, updated: 0, skipped: 0, errors: [] };
 
   try {
-    const dataResults = await syncDataPlans(ServicePlan, { providerName, AdminConfig });
+    const dataResults = await syncDataPlans(ServicePlan, { providerName: dataProviderName || providerName, AdminConfig });
     results.synced += dataResults.synced;
     results.updated += dataResults.updated;
     results.skipped += dataResults.skipped;

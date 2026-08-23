@@ -8,7 +8,7 @@
 // Base URL: https://geodnatech.com/api
 
 const axios = require('axios');
-const { createApiClient, getNetworkCode, successResponse, extractErrorMessage, extractProviderMessage, isSuccessResponse, describeHttpError } = require('./baseProvider');
+const { createApiClient, getNetworkCode, successResponse, extractErrorMessage, extractProviderMessage, isSuccessResponse, describeHttpError, resolveCableSubscribe } = require('./baseProvider');
 
 const API_KEY = process.env.GEODNATECH_API_KEY;
 const BASE_URL = process.env.GEODNATECH_BASE_URL || 'https://geodnatech.com/api';
@@ -282,9 +282,19 @@ async function subscribeCable({ identifier, plan, iuc, phone, amount }) {
   }
 
   try {
+    // Geodnatech expects NUMERIC primary keys for `cablename` and `cableplan`.
+    // Legacy plans may carry string slugs, so resolve them to this provider's ids.
+    const user = await _fetchUser();
+    const resolved = resolveCableSubscribe({
+      cableplan: user?.Cableplan,
+      identifier,
+      plan,
+      amount: amount ?? 0,
+    });
+
     const response = await apiClient.post('/cablesub/', {
-      cablename: identifier,
-      cableplan: plan,
+      cablename: resolved.cablename,
+      cableplan: resolved.cableplan,
       smart_card_number: iuc,
     });
 

@@ -7,7 +7,7 @@
 // Base URL: https://www.gladtidingsdata.com/api
 
 const axios = require('axios');
-const { createApiClient, getNetworkCode, successResponse, extractErrorMessage, isSuccessResponse, describeHttpError } = require('./baseProvider');
+const { createApiClient, getNetworkCode, successResponse, extractErrorMessage, isSuccessResponse, describeHttpError, resolveCableSubscribe } = require('./baseProvider');
 
 const API_KEY = process.env.GLADTIDINGS_API_KEY;
 const BASE_URL = process.env.GLADTIDINGS_BASE_URL;
@@ -134,6 +134,21 @@ function _clearServicesCache() {
   _servicesCache = null;
 }
 
+// Cache the /user/ response (contains Cableplan + Dataplans). Cleared alongside
+// the services cache so plan lists refresh together.
+let _userCache = null;
+
+async function _fetchUser() {
+  if (_userCache) return _userCache;
+  const response = await apiClient.get('/user/');
+  _userCache = response.data;
+  return _userCache;
+}
+
+function _clearUserCache() {
+  _userCache = null;
+}
+
 // Map from Gladtidings network names to our internal lowercase identifiers
 const NETWORK_NAME_MAP = {
   MTN: 'mtn',
@@ -218,10 +233,34 @@ async function purchaseData({ network, plan_code, mobile_number }) {
 // Cable TV
 // ---------------------------------------------------------------------------
 
+// Map from our internal cable provider identifiers to the plans container keys.
+const CABLE_PROVIDER_MAP = {
+  gotv: 'GOTVPLAN',
+  dstv: 'DSTVPLAN',
+  startime: 'STARTIMEPLAN',
+};
+
+// Reverse: from the provider's cable name to our internal identifier.
+const CABLE_NAME_TO_ID = {
+  gotv: 'gotv',
+  dstv: 'dstv',
+  startime: 'startime',
+};
+
 async function getCableProviders() {
   try {
-    const response = await apiClient.get('/services/');
-    return response.data;
+    _clearUserCache();
+    const data = await _fetchUser();
+    const cableNames = data?.Cableplan?.cablename || [];
+    const providers = cableNames
+      .map((entry) => {
+        const name = (entry.name || '').toLowerCase();
+        const id = CABLE_NAME_TO_ID[name];
+        if (!id) return null;
+        return { identifier: id, name: entry.name };
+      })
+      .filter(Boolean);
+    return { providers };
   } catch (error) {
     throw new Error(`[gladtidings] getCableProviders: ${extractErrorMessage(error)}`);
   }
@@ -230,8 +269,19 @@ async function getCableProviders() {
 async function getCablePlans(identifier) {
   if (!identifier) throw new Error('[gladtidings] getCablePlans: identifier is required.');
   try {
-    const response = await apiClient.get(`/services/?cable_id=${encodeURIComponent(identifier)}`);
-    return response.data;
+    const id = identifier.toLowerCase();
+    const planKey = CABLE_PROVIDER_MAP[id];
+    if (!planKey) return { plans: [] };
+
+    const data = await _fetchUser();
+    const cablePlans = data?.Cableplan?.[planKey] || [];
+    const plans = cablePlans.map((item) => ({
+      plan_code: String(item.cableplan_id || item.id || ''),
+      display: item.package || item.cableplan_id,
+      description: item.package || '',
+      amount: Number(item.plan_amount || 0),
+    }));
+    return { plans };
   } catch (error) {
     throw new Error(`[gladtidings] getCablePlans: ${extractErrorMessage(error)}`);
   }
@@ -262,9 +312,28 @@ async function subscribeCable({ identifier, plan, iuc, phone, amount }) {
   }
 
   try {
+    // Gladtidings expects NUMERIC primary keys for `cablename` and `cableplan`.
+    // Legacy plans may carry string slugs (e.g. peyflex 'nova'/'compact'), so
+    // resolve them to this provider's own ids before posting (same pattern the
+    // electricity endpoints use to resolve a disco to its numeric id).
+    const user = await _fetchUser();
+    const resolved = resolveCableSubscribe({
+      cableplan: user?.Cableplan,
+      identifier,
+      plan,
+      amount: amount ?? 0,
+    });
+
+    console.log('[gladtidingsProvider] Cable subscribe payload -> POST /cablesub/', {
+      cablename: resolved.cablename,
+      cableplan: resolved.cableplan,
+      rawIdentifier: identifier,
+      rawPlan: plan,
+    });
+
     const response = await apiClient.post('/cablesub/', {
-      cablename: identifier,
-      cableplan: plan,
+      cablename: resolved.cablename,
+      cableplan: resolved.cableplan,
       smart_card_number: iuc,
       phone,
     });

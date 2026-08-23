@@ -32,8 +32,49 @@ function getProviderColorClass(provider: string): string {
     case "gladtidings": return "text-purple-600";
     case "geodnatech":  return "text-emerald-600";
     case "peyflex":     return "text-amber-600";
+    case "all":         return "text-sky-600";
+    // Cable network fallbacks (for legacy plans without a VTU-provider tag).
+    case "dstv":        return "text-cyan-600";
+    case "gotv":        return "text-green-600";
+    case "startimes":
+    case "startime":    return "text-orange-600";
     default:            return "text-slate-600";
   }
+}
+
+// VTU providers the admin can filter plans by, even when a provider has not yet
+// been synced (so e.g. Geodnatech is always available and clearly empty until
+// the admin runs a data sync).
+const KNOWN_PROVIDERS = ["all", "peyflex", "gladtidings", "datastation", "geodnatech"];
+
+/**
+ * Best-effort VTU-provider label for a plan. Prefers the explicit
+ * `metadata.syncedFromProvider` tag (written at sync time); falls back to a
+ * readable label derived from the plan itself for legacy/untagged plans so every
+ * card still shows a provider indication.
+ */
+function resolvePlanProviderLabel(plan: ServicePlan): string {
+  const tag = plan.metadata?.syncedFromProvider;
+  if (tag) return tag;
+
+  const p = String(plan.provider || '').toLowerCase();
+  if (plan.service === "cable") {
+    if (p === "dstv") return "DSTV";
+    if (p === "gotv") return "GOtv";
+    if (p.includes("startime")) return "StarTimes";
+  }
+  if (plan.service === "data") {
+    const n = getNetworkFromProvider(plan.provider);
+    if (n === "mtn") return "MTN";
+    if (n === "glo") return "GLO";
+    if (n === "airtel") return "Airtel";
+    if (n === "9mobile") return "9mobile";
+  }
+  if (plan.service === "electricity") {
+    if (plan.planName) return plan.planName;
+    return p.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  }
+  return p.charAt(0).toUpperCase() + p.slice(1);
 }
 
 // Pretty-print a network identifier for the filter chips.
@@ -415,18 +456,28 @@ export default function PlansPage() {
 
   const services = ["ALL", ...new Set(plans.map(p => p.service))];
 
-  // Provider options — derived from the provider each plan was synced from.
-  const providers = ["ALL", ...Array.from(new Set(plans.map(p => p.metadata?.syncedFromProvider).filter(Boolean)))];
+  // Provider options — all known VTU providers plus any tags from synced plans
+  // (e.g. legacy tags) so e.g. Geodnatech is always selectable even before it is
+  // synced, instead of silently disappearing when zero plans carry the tag.
+  const extraProviders = Array.from(new Set(plans.map(p => p.metadata?.syncedFromProvider).filter(Boolean)))
+    .filter(p => p !== "all" && !KNOWN_PROVIDERS.includes(p));
+  const providers = ["ALL", ...KNOWN_PROVIDERS, ...extraProviders];
 
   // Quick pretty-label for a provider key ("all" -> "ALL API", else capitalized).
   const formatProviderDisplay = (p: string): string =>
     p === "ALL" ? "All Providers" : p === "all" ? "ALL API" : p.charAt(0).toUpperCase() + p.slice(1);
 
+  // Match a plan to the active provider filter. "ALL" and "ALL API" both show the
+  // whole catalog; any other selection requires the plan to carry that tag.
+  const matchesProviderFilter = (p: ServicePlan): boolean => {
+    if (providerFilter === "ALL" || providerFilter === "all") return true;
+    return (p.metadata?.syncedFromProvider || '') === providerFilter;
+  };
+
   // Data plans — used to power the Network Type + Plan Type + Duration filters.
   // Respects the active provider filter so the option lists stay relevant.
   const dataPlans = plans.filter(p =>
-    p.service === "data" &&
-    (providerFilter === "ALL" || (p.metadata?.syncedFromProvider || '') === providerFilter)
+    p.service === "data" && matchesProviderFilter(p)
   );
 
   const dataNetworks = Array.from(new Set(dataPlans.map(p => getNetworkFromProvider(p.provider))))
@@ -452,7 +503,7 @@ export default function PlansPage() {
   // Apply every active filter: service type, provider, network, plan type, and duration.
   const filteredPlans = plans.filter(p => {
     if (serviceFilter !== "ALL" && p.service !== serviceFilter) return false;
-    if (providerFilter !== "ALL" && (p.metadata?.syncedFromProvider || '') !== providerFilter) return false;
+    if (!matchesProviderFilter(p)) return false;
     if (networkFilter !== "ALL" && getNetworkFromProvider(p.provider) !== networkFilter) return false;
     if (planTypeFilter !== "ALL" && getPlanType(p) !== planTypeFilter) return false;
     if (durationFilter !== "ALL" && getDurationDays(p) !== Number(durationFilter)) return false;
@@ -633,13 +684,19 @@ export default function PlansPage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filteredPlans.length === 0 ? (
-            <div className="col-span-full text-center py-12 text-slate-500">No plans found</div>
+            <div className="col-span-full text-center py-12 text-slate-500">
+              {providerFilter === "ALL" || providerFilter === "all"
+                ? "No plans found"
+                : <>No plans for <span className="font-semibold text-slate-700">{formatProviderDisplay(providerFilter)}</span> yet. Run <strong>Sync Data</strong> (or <strong>Sync All</strong>) to import this provider's plans.</>}
+            </div>
           ) : (
-            filteredPlans.map((plan) => (
+            filteredPlans.map((plan) => {
+              const providerLabel = resolvePlanProviderLabel(plan);
+              return (
               <div key={plan._id} className="bg-white rounded-xl border border-slate-200 p-5 hover:shadow-md transition-shadow">
                 <div className="mb-2">
-                  <span className={`text-xs font-bold uppercase tracking-wide ${getProviderColorClass(plan.metadata?.syncedFromProvider || plan.provider)}`}>
-                    {formatProviderDisplay(plan.metadata?.syncedFromProvider || plan.provider)}
+                  <span className={`text-xs font-bold uppercase tracking-wide ${getProviderColorClass(providerLabel)}`}>
+                    {formatProviderDisplay(providerLabel)}
                   </span>
                 </div>
                 <div className="flex items-start justify-between mb-3">
@@ -728,7 +785,8 @@ export default function PlansPage() {
                   </button>
                 </div>
               </div>
-            ))
+              );
+            })
           )}
         </div>
       )}

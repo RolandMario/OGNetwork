@@ -7,7 +7,7 @@
 // Base URL: https://datastationapi.com/api
 
 const axios = require('axios');
-const { createApiClient, getNetworkCode, successResponse, extractErrorMessage, extractProviderMessage, isSuccessResponse, describeHttpError } = require('./baseProvider');
+const { createApiClient, getNetworkCode, successResponse, extractErrorMessage, extractProviderMessage, isSuccessResponse, describeHttpError, resolveCableSubscribe } = require('./baseProvider');
 
 const API_KEY = process.env.DATASTATION_API_KEY;
 const BASE_URL = process.env.DATASTATION_BASE_URL;
@@ -281,9 +281,19 @@ async function subscribeCable({ identifier, plan, iuc, phone, amount }) {
   }
 
   try {
+    // DataStation expects NUMERIC primary keys for `cablename` and `cableplan`.
+    // Legacy plans may carry string slugs, so resolve them to this provider's ids.
+    const user = await _fetchUser();
+    const resolved = resolveCableSubscribe({
+      cableplan: user?.Cableplan,
+      identifier,
+      plan,
+      amount: amount ?? 0,
+    });
+
     const response = await apiClient.post('/cable/', {
-      cablename: identifier,
-      cableplan: plan,
+      cablename: resolved.cablename,
+      cableplan: resolved.cableplan,
       smart_card_number: iuc,
     });
 

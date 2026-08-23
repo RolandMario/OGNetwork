@@ -169,7 +169,105 @@ function isSuccessResponse(data) {
 }
 
 /**
- * Build a short human-readable suffix describing an axios HTTP error:
+ * Normalise a cable provider identifier/name to a canonical internal key.
+ * Handles dstv/gotv/startime/startimes and whitespace/punctuation variants.
+ */
+function normalizeCableProviderKey(str) {
+  const s = String(str || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+  if (s === 'dstv') return 'dstv';
+  if (s === 'gotv') return 'gotv';
+  if (s === 'startime' || s === 'startimes') return 'startime';
+  return s;
+}
+
+/** Normalise a cable package name so 'Nova (Antenna) - 1 Month' → 'novaantenna1month'. */
+function normalizeCablePackageName(str) {
+  return String(str || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+}
+
+// Cable plan container key per canonical provider, matching the upstream /user/ shape.
+const CABLE_PLAN_KEYS_BY_PROVIDER = {
+  gotv: 'GOTVPLAN',
+  dstv: 'DSTVPLAN',
+  startime: 'STARTIMEPLAN',
+};
+
+/**
+ * Resolve a cable subscription's `cablename` + `cableplan` to the NUMERIC primary
+ * keys the Gladtidings/Geodnatech/Datastation family expects (mirrors how the
+ * electricity controllers use `_resolveDiscoId`). The request body may arrive
+ * with either numeric ids or legacy string slugs (e.g. plans synced from a
+ * different provider such as peyflex `nova`/`compact`).
+ *
+ * @param {Object} cableplan - The raw `Cableplan` object from the provider's /user/ response.
+ * @param {string} identifier - Cable provider identifier/name (e.g. 'dstv', 'startime', 'startimes', 'GOTV').
+ * @param {string|number} plan - Cable plan code/slug (e.g. 'compact', 'nova', or a numeric cableplan_id).
+ * @param {number} [amount] - Provider price (used to disambiguate 1‑week vs 1‑month variants of the same package).
+ * @returns {{ cablename: number, cableplan: number }}
+ * @throws {Error} with an actionable message when nothing matches.
+ */
+function resolveCableSubscribe({ cableplan, identifier, plan, amount }) {
+  const cableEntries = Array.isArray(cableplan && cableplan.cablename) ? cableplan.cablename : [];
+  const provKey = normalizeCableProviderKey(identifier);
+
+  // 1. Resolve cablename → numeric id.
+  let cablenameId = null;
+  const provNum = Number(identifier);
+  if (String(identifier).trim() !== '' && !Number.isNaN(provNum)) {
+    if (cableEntries.some((c) => Number(c.id) === provNum)) cablenameId = provNum;
+  }
+  if (!cablenameId) {
+    for (const c of cableEntries) {
+      if (normalizeCableProviderKey(c.name) === provKey) {
+        cablenameId = Number(c.id);
+        break;
+      }
+    }
+  }
+  if (!cablenameId) {
+    throw new Error(
+      `[cable] Unrecognised cable provider "${identifier}". Re-sync cable plans from the active provider before purchasing.`
+    );
+  }
+
+  // 2. Resolve cableplan → numeric id.
+  const planKey = CABLE_PLAN_KEYS_BY_PROVIDER[provKey];
+  const planEntries = Array.isArray(cableplan && cableplan[planKey]) ? cableplan[planKey] : [];
+  const planIdOf = (x) => Number(x.cableplan_id ?? x.id);
+  const planAmountOf = (x) => Number(x.plan_amount);
+
+  // 2a. Already numeric and recognised → use as-is.
+  const planNum = Number(plan);
+  if (String(plan).trim() !== '' && !Number.isNaN(planNum)) {
+    if (planEntries.some((x) => planIdOf(x) === planNum)) {
+      return { cablename: cablenameId, cableplan: planNum };
+    }
+  }
+
+  // 2b. String slug → match by package name, preferring an exact provider-price match.
+  const needle = normalizeCablePackageName(plan);
+  const price = Number(amount);
+  const candidates = planEntries.filter((x) => needle && normalizeCablePackageName(x.package).includes(needle));
+  const best =
+    candidates.find((x) => !Number.isNaN(price) && planAmountOf(x) === price) ||
+    candidates[0] ||
+    null;
+
+  if (best && !Number.isNaN(planIdOf(best))) {
+    return { cablename: cablenameId, cableplan: planIdOf(best) };
+  }
+
+  throw new Error(
+    `[cable] Could not resolve plan "${plan}" (provider: ${identifier}) on the active provider. Re-sync cable plans from the active provider before purchasing.`
+  );
+}
+
+/**
+ * Build a short human-readable message describing an axios HTTP error:
  *  e.g. " (HTTP 500 @ /validateiuc/) (body: {...})"
  * Used to enrich provider error messages so the real cause of an upstream
  * failure is visible instead of a bare "Request failed with status code N".
@@ -203,5 +301,7 @@ module.exports = {
   extractProviderMessage,
   isSuccessResponse,
   describeHttpError,
+  resolveCableSubscribe,
+  normalizeCableProviderKey,
   DEFAULT_NETWORK_MAP,
 };
