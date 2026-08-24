@@ -76,6 +76,35 @@ function formatCableProviderLabel(provider?: string) {
   return p.toUpperCase();
 }
 
+/**
+ * Format a data plan label/amount-of-data into a unitised size string.
+ * VTU providers store data plan names as bare numbers ("10" for a 10GB bundle,
+ * "500" for a 500MB bundle), so the receipt must show the amount of data bought
+ * (e.g. "10GB") instead of a bare number.
+ */
+function formatDataPlanLabel(value?: string) {
+  const raw = String(value == null ? "" : value).trim();
+  if (!raw) return "";
+
+  // Already carries a unit — normalise "10gb" → "10GB", "500 MB" → "500 MB".
+  if (/\b(gb|mb|kb|tb|gigabytes?|megabytes?|kilobytes?|terabytes?)\b/i.test(raw)) {
+    return raw.replace(/\b(gb|mb|kb|tb|gigabytes?|megabytes?|kilobytes?|terabytes?)\b/gi, (m) => {
+      const u = m.toLowerCase();
+      if (u.startsWith("g")) return "GB";
+      if (u.startsWith("m")) return "MB";
+      if (u.startsWith("k")) return "KB";
+      return "TB";
+    });
+  }
+
+  // Bare number — infer the unit from magnitude (fractional / < 100 → GB, hundreds → MB).
+  const cleaned = raw.replace(/[^0-9.]/g, "");
+  const num = parseFloat(cleaned);
+  if (Number.isNaN(num)) return raw; // e.g. "GIFTING - 30" → keep as-is
+  if (raw.includes(".") || num < 100) return `${num}GB`;
+  return `${num}MB`;
+}
+
 function getUser(tx: Transaction): UserInfo {
   if (tx.user && typeof tx.user === "object" && "_id" in tx.user) {
     const u = tx.user as UserInfo;
@@ -104,7 +133,7 @@ function receiptTitle(tx: Transaction) {
   const d = tx.details || {};
   switch (tx.type) {
     case "AIRTIME": return `${String(d.network || "").toUpperCase()} Airtime — ${d.beneficiary || ""}`;
-    case "DATA": return `${d.planName || d.planId || "Data Bundle"} — ${d.beneficiary || ""}`;
+    case "DATA": return `${formatDataPlanLabel(d.planName || d.plan_name) || d.planId || "Data Bundle"} — ${d.beneficiary || ""}`;
     case "CABLE": return `${d.planName || d.planId || "Cable TV"} — IUC ${d.beneficiary || ""}`;
     case "ELECTRICITY": return `${d.planName || "Electricity"} — Meter ${d.beneficiary || ""}`;
     case "FUNDING":
@@ -141,9 +170,11 @@ function buildRows(tx: Transaction) {
   if (tx.type === "AIRTIME") {
     rows.push({ label: "Phone Number", value: d.beneficiary || "—" });
   } else if (tx.type === "DATA") {
-    // Plan shows the plan name (e.g. "1.0GB") — the plan's display name, never
-    // the internal plan code — so admins can recognise the package at a glance.
-    rows.push({ label: "Plan", value: d.planName || d.plan_name || d.planId || "—" });
+    // Plan shows the amount of data bought (e.g. "10GB") — never the internal
+    // plan code. The provider stores data sizes as a bare number, so
+    // formatDataPlanLabel appends the correct unit (GB/MB).
+    const dataPlan = formatDataPlanLabel(d.planName || d.plan_name) || d.planId || "—";
+    rows.push({ label: "Plan", value: dataPlan });
     rows.push({ label: "Beneficiary", value: d.beneficiary || "—" });
   } else if (tx.type === "CABLE") {
     rows.push({ label: "Plan", value: d.planName || d.plan_name || d.planId || "—" });
