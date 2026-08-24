@@ -16,15 +16,13 @@ const TransactionSchema = new mongoose.Schema({
   profit: { type: Number, default: 0 },
   
   // Details about the service (e.g., phone number topped up)
+  // NOTE: stored as Mixed so every per-service receipt field persists. The
+  // previous narrow sub-schema silently dropped undeclared keys (planName,
+  // plan_name, userLevel, meterType, token, failureReason, ...), which meant
+  // receipts/history could not show the data plan size that buyData stores.
   details: {
-    beneficiary: String, // Phone number or meter number
-    network: String,     // MTN, Airtel
-    planId: String,      // Data plan ID if applicable
-    paymentMethod: String, // 'paystack', 'monnify', 'manual_transfer'
-    bankName: String,      // For manual transfer
-    accountNumber: String, // For manual transfer
-    accountName: String,   // For manual transfer
-    userNote: String,      // User note for manual transfer
+    type:    mongoose.Schema.Types.Mixed,
+    default: {},
   },
 
   // Admin note for manual wallet operations
