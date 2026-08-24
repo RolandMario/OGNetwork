@@ -680,7 +680,7 @@ exports.buyData = async (req, res) => {
       reference:     txData.reference,
       network,
       plan_code,
-      planName:      plan.planName,
+      plan_name:     plan.planName,
       mobile_number,
       amount:        userPrice,
       newBalance:    txData.newBalance / 100,
