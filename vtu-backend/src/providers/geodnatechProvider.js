@@ -188,6 +188,11 @@ async function purchaseData({ network, plan_code, mobile_number }) {
     const data = response.data;
 
     if (isSuccessResponse(data)) {
+      // DEBUG LOGGING: transaction receipt — dump the ENTIRE raw provider response
+      // so every receipt field (transaction_id, reference, amount, balance, etc.)
+      // is visible in the console when a data purchase succeeds.
+      console.log(`[geodnatechProvider] Data purchase SUCCESS (HTTP ${response.status}) — transaction receipt:`, JSON.stringify(data ?? null));
+
       return successResponse({
         providerTxId: data.transaction_id || data.id || data.reference || '',
         message: data.message || 'Data purchased successfully',

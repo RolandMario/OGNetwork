@@ -672,19 +672,31 @@ exports.buyData = async (req, res) => {
       sourceReference:   txData.reference,
     });
 
+    // 6. Build + send the transaction receipt. Also console.log the ENTIRE response
+    //    so the full receipt (reference, plan, phone, amount, provider ref) is
+    //    visible in the console when a data purchase succeeds.
+    const receiptData = {
+      id:            txData.transaction._id,
+      reference:     txData.reference,
+      network,
+      plan_code,
+      planName:      plan.planName,
+      mobile_number,
+      amount:        userPrice,
+      newBalance:    txData.newBalance / 100,
+      providerRef:   providerResponse.providerTxId || providerResponse.transaction_id || '',
+    };
+
+    console.log('[vtuController] buyData SUCCESS — transaction receipt:', JSON.stringify({
+      status:  'success',
+      message: `Data bundle sent to ${mobile_number}`,
+      data:    receiptData,
+    }));
+
     res.status(200).json({
       status:  'success',
       message: `Data bundle sent to ${mobile_number}`,
-      data: {
-        id:            txData.transaction._id,
-        reference:     txData.reference,
-        network,
-        plan_code,
-        planName:      plan.planName,
-        mobile_number,
-        amount:        userPrice,
-        newBalance:    txData.newBalance / 100,
-      },
+      data:    receiptData,
     });
 
   } catch (error) {

@@ -114,6 +114,11 @@ async function purchaseData({ network, plan_code, mobile_number }) {
     throw err;
   }
 
+  // DEBUG LOGGING: transaction receipt — dump the ENTIRE raw provider response
+  // so every receipt field (transaction_id, reference, amount, balance, etc.)
+  // is visible in the console when a data purchase succeeds.
+  console.log('[peyflexProvider] Data purchase SUCCESS — transaction receipt:', JSON.stringify(response ?? null));
+
   return successResponse({
     providerTxId: response.transaction_id || response.id || '',
     message: response.message || 'Data purchased successfully',

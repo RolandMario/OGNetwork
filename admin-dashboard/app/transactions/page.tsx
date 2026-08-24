@@ -173,8 +173,8 @@ function buildRows(tx: Transaction) {
     // Plan shows the amount of data bought (e.g. "10GB") — never the internal
     // plan code. The provider stores data sizes as a bare number, so
     // formatDataPlanLabel appends the correct unit (GB/MB).
-    // const dataPlan = formatDataPlanLabel(d.planName || d.plan_name) || d.planId || "—";
-    rows.push({ label: "Plan", value: d.plan_name});
+    const dataPlan = formatDataPlanLabel(d.planName || d.plan_name) || d.planId || "—";
+    rows.push({ label: "Plan", value: dataPlan });
     rows.push({ label: "Beneficiary", value: d.beneficiary || "—" });
   } else if (tx.type === "CABLE") {
     rows.push({ label: "Plan", value: d.planName || d.plan_name || d.planId || "—" });
