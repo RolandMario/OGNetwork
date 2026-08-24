@@ -8,6 +8,7 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { COLORS, SIZES, FONTS, SHADOWS } from '../../constants/theme';
 import apiClient from '../../services/api';
 import { API_ROUTES } from '../../constants/apiRoutes';
+import { formatDataPlanLabel } from '../../utils/receipt';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -50,7 +51,7 @@ function getTransactionTitle(tx) {
   const { type, details } = tx;
   switch (type) {
     case 'AIRTIME':     return `${details?.network?.toUpperCase() || ''} Airtime — ${details?.beneficiary || ''}`;
-    case 'DATA':        return `${details?.planName || details?.planId || 'Data Bundle'} — ${details?.beneficiary || ''}`;
+    case 'DATA':        return `${formatDataPlanLabel(details?.planName || details?.plan_name) || details?.planId || 'Data Bundle'} — ${details?.beneficiary || ''}`;
     case 'CABLE':       return `${details?.planName || details?.planId || 'Cable TV'} — IUC ${details?.beneficiary || ''}`;
     case 'ELECTRICITY': return `${details?.planName || 'Electricity'} — Meter ${details?.beneficiary || ''}`;
     case 'FUNDING':     return 'Wallet Funding';
