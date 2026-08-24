@@ -106,6 +106,76 @@ async function lookupPlan(ServicePlan, { service, provider, planCode }) {
 }
 
 // ---------------------------------------------------------------------------
+// Helper — data plan display label (ensures the data size is always shown)
+// ---------------------------------------------------------------------------
+// VTU providers store data plan names inconsistently: bare sizes ("10", "500"),
+// unit-ed sizes ("1GB", "500 MB"), or promotional tags ("Gifting"). This picks
+// the most size-like field from the plan and normalises it so the receipt
+// always shows the amount of data actually bought.
+//
+// Priority:
+//   1. plan.metadata.size       — explicit size metadata, when present
+//   2. a candidate carrying GB/MB/KB/TB anywhere (description/label/name)
+//   3. a bare numeric candidate ("10" → "10GB", "500" → "500MB")
+//   4. any non-empty label/description as a final fallback
+function normalizeDataSizeLabel(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+
+  // Already carries a unit → normalise casing ("500MB" → "500MB", "1gb" → "1GB").
+  // NOTE: no word-boundary anchor — sizes are usually concatenated ("500MB", "2.5gb").
+  if (/(?:GB|MB|KB|TB)/i.test(raw)) {
+    return raw.replace(/(?:GB|MB|KB|TB)/gi, (unit) => unit.toUpperCase());
+  }
+
+  // Pure number → infer the unit by magnitude (fractions / < 100 → GB, else MB).
+  if (/^\d+(\.\d+)?$/.test(raw)) {
+    const num = parseFloat(raw);
+    if (raw.includes('.') || num < 100) return `${num}GB`;
+    return `${num}MB`;
+  }
+
+  // Anything else (tag, description, plan code) → hand it through as-is.
+  return raw;
+}
+
+function getDataReceiptPlanLabel(plan = {}) {
+  const metadata = plan.metadata || {};
+  const candidates = [
+    metadata.size,
+    plan.description,
+    metadata.label,
+    plan.planName,
+    plan.planCode,
+    plan.plan_code,
+  ].filter((value) => value !== undefined && value !== null && String(value).trim() !== '');
+
+  // 1. Explicit size (from the plan metadata, if populated by a future sync).
+  if (metadata.size !== undefined && metadata.size !== null && String(metadata.size).trim() !== '') {
+    const normalized = normalizeDataSizeLabel(metadata.size);
+    if (normalized) return normalized;
+  }
+
+  // 2. First candidate that literally contains a size unit — the strongest signal.
+  const withUnit = candidates.find((value) => /(?:GB|MB|KB|TB)/i.test(String(value)));
+  if (withUnit !== undefined) {
+    const normalized = normalizeDataSizeLabel(withUnit);
+    if (normalized) return normalized;
+  }
+
+  // 3. First bare numeric candidate (plan_code like "316535") → never a size,
+  //    so only planName-derived numbers count. Skip planCode/plan_code here.
+  const bareNumeric = candidates.find((value) => /^\s*\d+(\.\d+)?\s*$/.test(String(value)));
+  if (bareNumeric !== undefined && bareNumeric !== plan.planCode && bareNumeric !== plan.plan_code) {
+    const normalized = normalizeDataSizeLabel(bareNumeric);
+    if (normalized) return normalized;
+  }
+
+  // 4. Any remaining non-empty label/description as a readable fallback.
+  return String(candidates[0] || plan.planCode || 'Data Bundle').trim();
+}
+
+// ---------------------------------------------------------------------------
 // Helper — ordered electricity provider candidates (active provider first)
 // ---------------------------------------------------------------------------
 // The DISCO plans saved in ServicePlan are often synced from a different
@@ -634,11 +704,22 @@ exports.buyData = async (req, res) => {
     const levelPrice = plan.prices && plan.prices[userLevel];
     const userPrice = (levelPrice && levelPrice > 0) ? levelPrice : plan.ourPrice;
 
+    // Display label for the receipt — derived so the data size (e.g. "10GB")
+    // is always visible, even when planName is a bare/misleading provider label.
+    const planDisplayName = getDataReceiptPlanLabel(plan);
+
     txData = await debitWalletAndCreateTx({
       userId,
       amountNaira: userPrice,
       type:        'DATA',
-      details:     { beneficiary: mobile_number, network, planId: plan_code, planName: plan.planName, userLevel },
+      details:     {
+        beneficiary: mobile_number,
+        network,
+        planId:      plan_code,
+        planName:    planDisplayName,
+        plan_name:   planDisplayName,
+        userLevel,
+      },
       Wallet,
       Transaction,
     });
@@ -680,7 +761,7 @@ exports.buyData = async (req, res) => {
       reference:     txData.reference,
       network,
       plan_code,
-      plan_name:     plan.planName,
+      plan_name:     planDisplayName,
       mobile_number,
       amount:        userPrice,
       newBalance:    txData.newBalance / 100,
