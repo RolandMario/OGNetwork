@@ -55,6 +55,27 @@ function formatDate(isoStr?: string) {
   });
 }
 
+// Pretty network label for airtime/data: 'mtn' → 'MTN', '9mobile' → '9mobile'.
+function formatNetworkLabel(network?: string) {
+  const n = String(network || "").toLowerCase();
+  if (n === "mtn") return "MTN";
+  if (n === "glo") return "GLO";
+  if (n === "airtel") return "Airtel";
+  if (n === "9mobile") return "9mobile";
+  if (!n) return "—";
+  return n.charAt(0).toUpperCase() + n.slice(1);
+}
+
+/** Pretty cable provider label: 'dstv' → 'DSTV', 'gotv' → 'GOtv', 'startime(s)' → 'StarTimes'. */
+function formatCableProviderLabel(provider?: string) {
+  const p = String(provider || "").toLowerCase();
+  if (p.startsWith("dstv")) return "DSTV";
+  if (p.startsWith("gotv")) return "GOtv";
+  if (p.startsWith("startime")) return "StarTimes";
+  if (!p) return "—";
+  return p.toUpperCase();
+}
+
 function getUser(tx: Transaction): UserInfo {
   if (tx.user && typeof tx.user === "object" && "_id" in tx.user) {
     const u = tx.user as UserInfo;
@@ -102,20 +123,33 @@ function buildRows(tx: Transaction) {
 
   rows.push({ label: "Customer", value: customer });
   rows.push({ label: "Date & Time", value: formatDate(tx.createdAt) });
-  rows.push({ label: "Service", value: serviceLabel(tx.type) });
+
+  // For a purchased plan the leading row shows the plan's network/provider
+  // (e.g. "Network: MTN") instead of a generic service category, matching the
+  // mobile app receipt. Financial entries keep the generic label.
+  if (tx.type === "AIRTIME" || tx.type === "DATA") {
+    rows.push({ label: "Network", value: formatNetworkLabel(d.network) });
+  } else if (tx.type === "CABLE") {
+    rows.push({ label: "Provider", value: formatCableProviderLabel(d.network || d.cableProvider) });
+  } else if (tx.type === "ELECTRICITY") {
+    rows.push({ label: "Provider", value: d.planName || (d.network ? formatNetworkLabel(d.network) : "—") });
+  } else {
+    rows.push({ label: "Service", value: serviceLabel(tx.type) });
+  }
   rows.push({ label: "Description", value: receiptTitle(tx) });
 
   if (tx.type === "AIRTIME") {
-    rows.push({ label: "Network", value: String(d.network || "—").toUpperCase() });
     rows.push({ label: "Phone Number", value: d.beneficiary || "—" });
   } else if (tx.type === "DATA") {
-    rows.push({ label: "Plan", value: d.planName || d.planId || "—" });
+    // Plan shows the plan name (e.g. "1.0GB") — the plan's display name, never
+    // the internal plan code — so admins can recognise the package at a glance.
+    rows.push({ label: "Plan", value: d.planName || d.plan_name || d.planId || "—" });
     rows.push({ label: "Beneficiary", value: d.beneficiary || "—" });
   } else if (tx.type === "CABLE") {
-    rows.push({ label: "Plan", value: d.planName || d.planId || "—" });
+    rows.push({ label: "Plan", value: d.planName || d.plan_name || d.planId || "—" });
     rows.push({ label: "IUC Number", value: d.beneficiary || "—" });
   } else if (tx.type === "ELECTRICITY") {
-    rows.push({ label: "Plan", value: d.planName || "—" });
+    rows.push({ label: "Plan", value: d.planName || d.plan_name || d.planId || "—" });
     rows.push({ label: "Meter Number", value: d.beneficiary || "—" });
     rows.push({ label: "Meter Type", value: String(d.meterType || "—").toUpperCase() });
     if (d.token) rows.push({ label: "Buy Token", value: d.token });

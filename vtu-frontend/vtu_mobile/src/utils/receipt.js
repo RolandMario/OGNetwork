@@ -123,27 +123,35 @@ export function buildReceiptRows({ transaction, user } = {}) {
   const rows = [];
 
   // 1. Service / item description
-  rows.push({ label: 'Service', value: (getServiceMeta(type) || {}).label || type || 'Transaction' });
-  rows.push({ label: 'Description', value: getReceiptTitle(tx) || '—' });
-
-  if (type === 'AIRTIME') {
+  // For a purchased plan the leading row shows the plan's network/provider
+  // (e.g. "Network: MTN") instead of a generic service category, so the
+  // customer can see at a glance which network a plan belongs to. Financial
+  // entries (funding, commission, admin credit/…) keep the generic label.
+  if (type === 'AIRTIME' || type === 'DATA') {
     rows.push({ label: 'Network', value: formatNetworkLabel(details.network) });
-    rows.push({ label: 'Phone Number', value: details.beneficiary || '—' });
-  } else if (type === 'DATA') {
-    rows.push({ label: 'Network', value: formatNetworkLabel(details.network) });
-    rows.push({ label: 'Plan', value: details.planName || details.planId || '—' });
-    rows.push({ label: 'Beneficiary', value: details.beneficiary || '—' });
   } else if (type === 'CABLE') {
     rows.push({ label: 'Provider', value: formatCableProviderLabel(details.network || details.cableProvider) });
-    rows.push({ label: 'Plan', value: details.planName || details.planId || '—' });
-    rows.push({ label: 'IUC Number', value: details.beneficiary || '—' });
   } else if (type === 'ELECTRICITY') {
     // For electricity the DISCO (e.g. 'Ikeja Electric') is the provider; the
     // network slug is kept as the plan reference.
     rows.push({ label: 'Provider', value: details.planName || (details.network ? formatNetworkLabel(details.network) : '—') });
-    if (details.planId || (details.network && !details.planName)) {
-      rows.push({ label: 'DISCO', value: details.planId || details.network });
-    }
+  } else {
+    rows.push({ label: 'Service', value: (getServiceMeta(type) || {}).label || type || 'Transaction' });
+  }
+  rows.push({ label: 'Description', value: getReceiptTitle(tx) || '—' });
+
+  if (type === 'AIRTIME') {
+    rows.push({ label: 'Phone Number', value: details.beneficiary || '—' });
+  } else if (type === 'DATA') {
+    // Plan shows the plan name (e.g. "1.0GB") — the plan's display name, never
+    // the internal plan code — so users can recognise the package they bought.
+    rows.push({ label: 'Plan', value: details.planName || details.plan_name || details.planId || '—' });
+    rows.push({ label: 'Beneficiary', value: details.beneficiary || '—' });
+  } else if (type === 'CABLE') {
+    rows.push({ label: 'Plan', value: details.planName || details.plan_name || details.planId || '—' });
+    rows.push({ label: 'IUC Number', value: details.beneficiary || '—' });
+  } else if (type === 'ELECTRICITY') {
+    rows.push({ label: 'Plan', value: details.planName || details.plan_name || details.planId || '—' });
     rows.push({ label: 'Meter Number', value: details.beneficiary || '—' });
     rows.push({ label: 'Meter Type', value: String(details.meterType || '—').toUpperCase() });
     if (details.token) rows.push({ label: 'Buy Token', value: details.token });

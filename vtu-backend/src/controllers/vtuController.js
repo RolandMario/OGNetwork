@@ -158,8 +158,16 @@ exports.getPlans = async (req, res) => {
 
     let plans = rawPlans;
 
-    // Filter to only the active provider's plans (unless a specific provider was requested)
-    if (!provider) {
+    // Filter to only the active provider's plans (unless a specific provider was
+    // requested). This ONLY applies to the DATA service, where plans belong to
+    // branded networks (MTN/Airtel/GLO/9mobile) and must be limited to the VTU
+    // provider the admin switched on. For CABLE (DSTV/GOtv/StarTimes),
+    // AIRTIME and ELECTRICITY the plan itself is the unit — every plan the admin
+    // has made active/visible must reach the user's app regardless of which
+    // upstream VTU API synced it (the plan's `provider` is the cable brand, not
+    // the upstream API). Dropping cable plans based on `syncedFromProvider`
+    // caused enabled DSTV/GOtv/StarTimes packages to disappear from the app.
+    if (!provider && service === 'data') {
       try {
         const providerMap = await providerRegistry.getProviderMap(req.models.AdminConfig);
         const activeProvider = providerMap[service];

@@ -23,6 +23,17 @@ const PROVIDER_COLORS = {
   startimes: '#FF6600',
 };
 
+// Resolve a cable provider's brand color. The provider identifier stored on
+// plans is the singular brand key (e.g. 'startime'), so normalize it to the
+// color-map key before looking it up; unknown providers fall back to a neutral
+// grey so the card never renders with an undefined color.
+function resolveProviderColor(provider) {
+  const key = String(provider || '').toLowerCase();
+  if (PROVIDER_COLORS[key]) return PROVIDER_COLORS[key];
+  if (key === 'startime') return PROVIDER_COLORS['startimes'];
+  return '#888';
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -70,7 +81,7 @@ const BuyCableScreen = ({ navigation }) => {
             provs.push({
               identifier: p.provider,
               name:       p.provider.toUpperCase(),
-              color:      PROVIDER_COLORS[p.provider] || '#888',
+              color:      resolveProviderColor(p.provider),
             });
           }
         });
