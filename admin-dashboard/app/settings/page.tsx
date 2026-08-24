@@ -98,24 +98,15 @@ export default function SettingsPage() {
   const [profileLoading, setProfileLoading] = useState(true);
   const [adminProfile, setAdminProfile] = useState<any>(null);
 
-  // Email change state
-  const [emailStep, setEmailStep] = useState<'idle' | 'otp-sent' | 'done'>('idle');
-  const [emailSending, setEmailSending] = useState(false);
-  const [emailOtp, setEmailOtp] = useState('');
+  // Credential change state (single "Change Credentials" flow)
+  const [credStep, setCredStep] = useState<'idle' | 'otp-sent' | 'done'>('idle');
+  const [credSending, setCredSending] = useState(false);
+  const [credOtp, setCredOtp] = useState('');
   const [newEmail, setNewEmail] = useState('');
-  const [emailChanging, setEmailChanging] = useState(false);
-  const [emailChanged, setEmailChanged] = useState(false);
-  const [emailError, setEmailError] = useState<string | null>(null);
-
-  // Password change state
-  const [passwordStep, setPasswordStep] = useState<'idle' | 'otp-sent' | 'done'>('idle');
-  const [passwordSending, setPasswordSending] = useState(false);
-  const [passwordOtp, setPasswordOtp] = useState('');
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
-  const [passwordChanging, setPasswordChanging] = useState(false);
-  const [passwordChanged, setPasswordChanged] = useState(false);
-  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [credUpdating, setCredUpdating] = useState(false);
+  const [credError, setCredError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!localStorage.getItem("adminToken")) {
@@ -275,79 +266,49 @@ export default function SettingsPage() {
     }
   };
 
-  const handleSendEmailOtp = async () => {
+  const handleSendCredOtp = async () => {
     try {
-      setEmailSending(true);
-      setEmailError(null);
-      const data = await fetchWithAuth("/admin/send-otp", {
+      setCredSending(true);
+      setCredError(null);
+      await fetchWithAuth("/admin/send-otp", {
         method: "POST",
-        body: JSON.stringify({ action: "change_email" }),
+        body: JSON.stringify({ action: "change_credentials" }),
       });
-      console.log("OTP sent:", data);
-      setEmailStep("otp-sent");
+      setCredOtp("");
+      setCredStep("otp-sent");
     } catch (err: any) {
-      setEmailError(err.message);
+      setCredError(err.message);
     } finally {
-      setEmailSending(false);
+      setCredSending(false);
     }
   };
 
-  const handleChangeEmail = async () => {
+  const handleChangeCredentials = async () => {
+    if (!credOtp || credOtp.length < 6) {
+      setCredError("Please enter the 6-digit OTP code sent to your current email.");
+      return;
+    }
+    if (!newEmail.trim() && !(currentPassword && newPassword)) {
+      setCredError("Provide a new email and/or a new password (with your current password).");
+      return;
+    }
     try {
-      setEmailChanging(true);
-      setEmailError(null);
-      const data = await fetchWithAuth("/admin/change-email", {
+      setCredUpdating(true);
+      setCredError(null);
+      const payload: Record<string, any> = { otp: credOtp };
+      if (newEmail.trim()) payload.newEmail = newEmail.trim();
+      if (currentPassword) payload.currentPassword = currentPassword;
+      if (newPassword) payload.newPassword = newPassword;
+      const data = await fetchWithAuth("/admin/change-credentials", {
         method: "POST",
-        body: JSON.stringify({ newEmail, otp: emailOtp }),
+        body: JSON.stringify(payload),
       });
-      setEmailChanged(true);
-      setTimeout(() => {
-        setEmailStep("done");
-        setEmailChanged(false);
-      }, 1000);
-      // Update local profile
+      setCredStep("done");
       setAdminProfile(data.data.user);
     } catch (err: any) {
-      setEmailError(err.message);
+      setCredError(err.message);
     } finally {
-      setEmailChanging(false);
-    }
-  };
-
-  const handleSendPasswordOtp = async () => {
-    try {
-      setPasswordSending(true);
-      setPasswordError(null);
-      const data = await fetchWithAuth("/admin/send-otp", {
-        method: "POST",
-        body: JSON.stringify({ action: "change_password" }),
-      });
-      console.log("OTP sent:", data);
-      setPasswordStep("otp-sent");
-    } catch (err: any) {
-      setPasswordError(err.message);
-    } finally {
-      setPasswordSending(false);
-    }
-  };
-
-  const handleChangePassword = async () => {
-    try {
-      setPasswordChanging(true);
-      setPasswordError(null);
-      await fetchWithAuth("/admin/change-password", {
-        method: "POST",
-        body: JSON.stringify({ currentPassword, newPassword, otp: passwordOtp }),
-      });
-      setPasswordChanged(true);
-      setTimeout(() => {
-        setPasswordStep("done");
-        setPasswordChanged(false);
-      }, 1000);
-    } catch (err: any) {
-      setPasswordError(err.message);
-    } finally {
-      setPasswordChanging(false);
+      setCredUpdating(false);
     }
   };
   return (
@@ -655,46 +616,48 @@ export default function SettingsPage() {
         )}
 
         <div className="border-t border-slate-100 pt-4 space-y-4">
-          {/* Change Email */}
+          {/* Change Credentials (single OTP-verified flow) */}
           <div>
-            <h3 className="text-sm font-medium text-slate-700 mb-2">Change Email Address</h3>
+            <h3 className="text-sm font-medium text-slate-700 mb-2">Change Credentials</h3>
             <p className="text-xs text-slate-500 mb-3">
               Current email: <span className="font-medium text-slate-700">{adminProfile?.email || '—'}</span>
             </p>
 
-            {emailStep === 'idle' && (
+            {credStep === 'idle' && (
               <button
-                onClick={handleSendEmailOtp}
-                disabled={emailSending}
+                onClick={handleSendCredOtp}
+                disabled={credSending}
                 className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {emailSending ? (
+                {credSending ? (
                   <span className="flex items-center gap-2">
                     <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                     Sending OTP...
                   </span>
                 ) : (
-                  'Send OTP to Current Email'
+                  'Change Credentials'
                 )}
               </button>
             )}
 
-            {emailStep === 'otp-sent' && (
+            {credStep === 'otp-sent' && (
               <div className="space-y-3">
                 <div>
                   <label className="block text-xs font-medium text-slate-600 mb-1">Enter OTP Code</label>
                   <input
                     type="text"
-                    value={emailOtp}
-                    onChange={(e) => setEmailOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    value={credOtp}
+                    onChange={(e) => setCredOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
                     placeholder="000000"
                     maxLength={6}
                     className="w-32 px-3 py-2 border border-slate-300 rounded-lg text-lg text-center font-bold tracking-widest focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
                   />
-                  <p className="text-xs text-slate-400 mt-1">Check your email for the 6-digit code</p>
+                  <p className="text-xs text-slate-400 mt-1">
+                    A 6-digit code has been sent to your current email. It expires in 10 minutes.
+                  </p>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-slate-600 mb-1">New Email Address</label>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">New Email Address (optional)</label>
                   <input
                     type="email"
                     value={newEmail}
@@ -702,84 +665,10 @@ export default function SettingsPage() {
                     placeholder="newadmin@example.com"
                     className="w-full max-w-sm px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
                   />
-                </div>
-                {emailError && (
-                  <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{emailError}</p>
-                )}
-                <div className="flex items-center gap-3">
-                  <button
-                    onClick={handleChangeEmail}
-                    disabled={emailChanging || !emailOtp || emailOtp.length < 6 || !newEmail}
-                    className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {emailChanging ? (
-                      <span className="flex items-center gap-2">
-                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                        Updating...
-                      </span>
-                    ) : emailChanged ? (
-                      '✓ Updated'
-                    ) : (
-                      'Verify OTP & Change Email'
-                    )}
-                  </button>
-                  <button
-                    onClick={() => { setEmailStep('idle'); setEmailOtp(''); setNewEmail(''); setEmailError(null); }}
-                    className="px-3 py-2 text-sm text-slate-600 hover:text-slate-900"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {emailStep === 'done' && (
-              <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-3">
-                <p className="text-sm text-green-700 font-medium">✓ Email updated successfully!</p>
-                <p className="text-xs text-green-600 mt-1">Your admin email has been changed.</p>
-              </div>
-            )}
-          </div>
-<div className="border-t border-slate-100 pt-4">
-            {/* Change Password */}
-            <h3 className="text-sm font-medium text-slate-700 mb-2">Change Password</h3>
-            <p className="text-xs text-slate-500 mb-3">
-              Requires OTP verification sent to your current email.
-            </p>
-
-            {passwordStep === 'idle' && (
-              <button
-                onClick={handleSendPasswordOtp}
-                disabled={passwordSending}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {passwordSending ? (
-                  <span className="flex items-center gap-2">
-                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    Sending OTP...
-                  </span>
-                ) : (
-                  'Send OTP to Current Email'
-                )}
-              </button>
-            )}
-
-            {passwordStep === 'otp-sent' && (
-              <div className="space-y-3">
-                <div>
-                  <label className="block text-xs font-medium text-slate-600 mb-1">Enter OTP Code</label>
-                  <input
-                    type="text"
-                    value={passwordOtp}
-                    onChange={(e) => setPasswordOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                    placeholder="000000"
-                    maxLength={6}
-                    className="w-32 px-3 py-2 border border-slate-300 rounded-lg text-lg text-center font-bold tracking-widest focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                  />
-                  <p className="text-xs text-slate-400 mt-1">Check your email for the 6-digit code</p>
+                  <p className="text-xs text-slate-400 mt-1">Leave blank to keep your current email.</p>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-slate-600 mb-1">Current Password</label>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Current Password (required to change password)</label>
                   <input
                     type="password"
                     value={currentPassword}
@@ -789,7 +678,7 @@ export default function SettingsPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-slate-600 mb-1">New Password</label>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">New Password (optional)</label>
                   <input
                     type="password"
                     value={newPassword}
@@ -797,29 +686,28 @@ export default function SettingsPage() {
                     placeholder="At least 6 characters"
                     className="w-full max-w-sm px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
                   />
+                  <p className="text-xs text-slate-400 mt-1">Leave blank to keep your current password.</p>
                 </div>
-                {passwordError && (
-                  <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{passwordError}</p>
+                {credError && (
+                  <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{credError}</p>
                 )}
                 <div className="flex items-center gap-3">
                   <button
-                    onClick={handleChangePassword}
-                    disabled={passwordChanging || !passwordOtp || passwordOtp.length < 6 || !currentPassword || !newPassword}
+                    onClick={handleChangeCredentials}
+                    disabled={credUpdating || !credOtp || credOtp.length < 6 || (!newEmail && !(currentPassword && newPassword))}
                     className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {passwordChanging ? (
+                    {credUpdating ? (
                       <span className="flex items-center gap-2">
                         <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                        Updating...
+                        Verifying & Updating...
                       </span>
-                    ) : passwordChanged ? (
-                      '✓ Updated'
                     ) : (
-                      'Verify OTP & Change Password'
+                      'Verify OTP & Update Credentials'
                     )}
                   </button>
                   <button
-                    onClick={() => { setPasswordStep('idle'); setPasswordOtp(''); setCurrentPassword(''); setNewPassword(''); setPasswordError(null); }}
+                    onClick={() => { setCredStep('idle'); setCredOtp(''); setNewEmail(''); setCurrentPassword(''); setNewPassword(''); setCredError(null); }}
                     className="px-3 py-2 text-sm text-slate-600 hover:text-slate-900"
                   >
                     Cancel
@@ -828,13 +716,14 @@ export default function SettingsPage() {
               </div>
             )}
 
-            {passwordStep === 'done' && (
+            {credStep === 'done' && (
               <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-3">
-                <p className="text-sm text-green-700 font-medium">✓ Password updated successfully!</p>
-                <p className="text-xs text-green-600 mt-1">Your admin password has been changed.</p>
+                <p className="text-sm text-green-700 font-medium">✓ Credentials updated successfully!</p>
+                <p className="text-xs text-green-600 mt-1">Your admin email and/or password have been changed.</p>
               </div>
             )}
           </div>
+          
         </div>
       </div>
 

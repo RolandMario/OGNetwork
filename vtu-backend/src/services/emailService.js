@@ -50,6 +50,72 @@ function getTransporter() {
 }
 
 // ---------------------------------------------------------------------------
+// New Member Registration Template (admin notification)
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a simple HTML email body notifying an admin of a new member.
+ */
+function buildNewMemberEmailBody({ fullName, email, phone }) {
+  return `
+    <div style="max-width:480px;margin:0 auto;font-family:Arial,sans-serif;padding:24px;border:1px solid #e2e8f0;border-radius:12px;">
+      <div style="text-align:center;margin-bottom:24px;">
+        <div style="display:inline-block;width:48px;height:48px;background:#2563eb;border-radius:12px;line-height:48px;text-align:center;color:#fff;font-weight:700;font-size:20px;">OG</div>
+      </div>
+      <h2 style="color:#1e293b;text-align:center;margin:0 0 8px;">New Member Registered</h2>
+      <p style="color:#64748b;text-align:center;margin:0 0 24px;font-size:14px;">
+        A new member has just created an account.
+      </p>
+      <div style="text-align:left;margin:24px 0;background:#f8fafc;border-radius:8px;padding:16px 20px;">
+        <p style="color:#334155;font-size:14px;margin:0 0 8px;"><strong>Name:</strong> ${fullName || '—'}</p>
+        <p style="color:#334155;font-size:14px;margin:0 0 8px;"><strong>Email:</strong> ${email || '—'}</p>
+        <p style="color:#334155;font-size:14px;margin:0;"><strong>Phone:</strong> ${phone || '—'}</p>
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Send an admin notification email about a newly registered member.
+ *
+ * @param {Object}  options
+ * @param {string}  options.to        - Admin recipient email address
+ * @param {string}  options.fullName  - New member full name
+ * @param {string}  options.email     - New member email
+ * @param {string}  options.phone     - New member phone number
+ * @returns {Promise<{sent:boolean, messageId?:string, reason?:string}>}
+ */
+async function sendNewMemberNotification({ to, fullName, email, phone }) {
+  const t = getTransporter();
+
+  if (!t) {
+    // Development fallback — just log to console
+    console.log('============================================================');
+    console.log(`[emailService] NEW MEMBER NOTIFICATION for admin ${to}:`);
+    console.log(`[emailService]   Name : ${fullName}`);
+    console.log(`[emailService]   Email: ${email}`);
+    console.log(`[emailService]   Phone: ${phone}`);
+    console.log('============================================================');
+    return { sent: true, messageId: 'console-dev' };
+  }
+
+  try {
+    const info = await t.sendMail({
+      from: `"${FROM_NAME}" <${FROM_EMAIL}>`,
+      to,
+      subject: 'New Member Registered',
+      html: buildNewMemberEmailBody({ fullName, email, phone }),
+    });
+
+    console.log(`[emailService] New member notification sent to ${to}: ${info.messageId}`);
+    return { sent: true, messageId: info.messageId };
+  } catch (error) {
+    console.error(`[emailService] Failed to send new member notification to ${to}:`, error.message);
+    return { sent: false, reason: error.message };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // OTP Template
 // ---------------------------------------------------------------------------
 
@@ -120,4 +186,5 @@ async function sendOtpEmail({ to, otp, action }) {
 
 module.exports = {
   sendOtpEmail,
+  sendNewMemberNotification,
 };

@@ -1596,8 +1596,11 @@ exports.getSentNotifications = async (req, res) => {
 const otpStore = new Map();
 
 /**
- * Generate a random 6-digit OTP
+ * Generate a random 6-digit OTP.
  */
+function generateOtp() {
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
 /**
  * @desc    Get current admin profile
  * @route   GET /api/v1/admin/profile
@@ -1630,17 +1633,17 @@ exports.getAdminProfile = async (req, res) => {
  * @desc    Send OTP verification code to admin's current email
  * @route   POST /api/v1/admin/send-otp
  * @access  Private, Admin only
- * @body    { action: 'change_email' | 'change_password' }
+ * @body    { action: 'change_email' | 'change_password' | 'change_credentials' }
  */
 exports.sendOtp = async (req, res) => {
   try {
     const { action } = req.body;
     const user = req.user;
 
-    if (!action || !['change_email', 'change_password'].includes(action)) {
+    if (!action || !['change_email', 'change_password', 'change_credentials'].includes(action)) {
       return res.status(400).json({
         status: 'fail',
-        message: 'Please specify a valid action: change_email or change_password.',
+        message: 'Please specify a valid action: change_email, change_password, or change_credentials.',
       });
     }
 
@@ -1655,7 +1658,12 @@ exports.sendOtp = async (req, res) => {
     const result = await emailService.sendOtpEmail({
       to: user.email,
       otp,
-      action: action === 'change_email' ? 'change your admin email' : 'change your admin password',
+      action:
+        action === 'change_email'
+          ? 'change your admin email'
+          : action === 'change_password'
+            ? 'change your admin password'
+            : 'update your admin login credentials',
     });
 
     if (!result.sent) {
@@ -1883,6 +1891,144 @@ exports.changePassword = async (req, res) => {
     });
   } catch (error) {
     console.error('[adminController.changePassword] error:', error.message);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+/**
+ * @desc    Change admin email and/or password in one request.
+ *          Verifies the OTP before applying any credential change.
+ * @route   POST /api/v1/admin/change-credentials
+ * @access  Private, Admin only
+ * @body    { otp: string, newEmail?: string, currentPassword?: string, newPassword?: string }
+ */
+exports.changeCredentials = async (req, res) => {
+  try {
+    const User = req.models.User;
+    const { otp, newEmail, currentPassword, newPassword } = req.body;
+    const userId = String(req.user._id);
+
+    const hasEmail = !!(newEmail && newEmail.trim());
+    const hasPassword = !!(currentPassword && newPassword);
+
+    if (!otp) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'OTP code is required.',
+      });
+    }
+
+    if (!hasEmail && !hasPassword) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Please provide a new email and/or a new password.',
+      });
+    }
+
+    if (hasEmail) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(newEmail.trim())) {
+        return res.status(400).json({
+          status: 'fail',
+          message: 'Please provide a valid email address.',
+        });
+      }
+      if (newEmail.trim().toLowerCase() === req.user.email.toLowerCase()) {
+        return res.status(400).json({
+          status: 'fail',
+          message: 'New email must be different from your current email.',
+        });
+      }
+    }
+
+    if (hasPassword && newPassword.length < 6) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'New password must be at least 6 characters long.',
+      });
+    }
+
+    // --- OTP verification (must be valid, unused, and not expired) ---
+    const stored = otpStore.get(userId);
+    if (!stored) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'No OTP found. Please request a new one.',
+      });
+    }
+    if (stored.used) {
+      otpStore.delete(userId);
+      return res.status(400).json({
+        status: 'fail',
+        message: 'This OTP has already been used. Please request a new one.',
+      });
+    }
+    if (Date.now() > stored.expiresAt) {
+      otpStore.delete(userId);
+      return res.status(400).json({
+        status: 'fail',
+        message: 'OTP has expired. Please request a new one.',
+      });
+    }
+    if (stored.otp !== otp) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Invalid OTP code. Please try again.',
+      });
+    }
+
+    if (hasEmail) {
+      const existingUser = await User.findOne({ email: newEmail.trim().toLowerCase() });
+      if (existingUser) {
+        return res.status(409).json({
+          status: 'fail',
+          message: 'This email is already in use by another account.',
+        });
+      }
+    }
+
+    // Fetch full user record including the hashed password.
+    const user = await User.findById(userId).select('+password');
+    if (!user) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'User not found.',
+      });
+    }
+
+    if (hasPassword) {
+      const isMatch = await bcrypt.compare(currentPassword, user.password);
+      if (!isMatch) {
+        return res.status(401).json({
+          status: 'fail',
+          message: 'Current password is incorrect.',
+        });
+      }
+      user.password = newPassword;
+    }
+
+    if (hasEmail) {
+      user.email = newEmail.trim().toLowerCase();
+    }
+
+    await user.save();
+
+    otpStore.delete(userId);
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Credentials updated successfully.',
+      data: {
+        user: {
+          _id: user._id,
+          fullName: user.fullName,
+          email: user.email,
+          phone: user.phone,
+          role: user.role,
+        },
+      },
+    });
+  } catch (error) {
+    console.error('[adminController.changeCredentials] error:', error.message);
     res.status(500).json({ status: 'error', message: error.message });
   }
 };

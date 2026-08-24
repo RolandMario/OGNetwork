@@ -5,6 +5,7 @@
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const paymentService = require('../services/paymentService');
+const emailService = require('../services/emailService');
 const { getTenantSecret } = require('../services/tenantConfigService');
 
 // ---------------------------------------------------------------------------
@@ -141,10 +142,28 @@ exports.register = async (req, res) => {
     // 4. Respond immediately — don't make the user wait for Paystack
     createSendToken(createdUser, 201, res);
 
-    // 5. Provision DVA in the background (best-effort, non-blocking).
-    //    The response has already been sent above.
+    // 5. Provision DVA and notify the admin in the background (best-effort,
+    //    non-blocking). The response has already been sent above.
     setImmediate(() => {
       provisionDedicatedAccount({ user: createdUser, tenantId, User });
+
+      // Notify the admin about the newly registered member.
+      // Defaults to the configured SMTP "from" address unless an explicit
+      // ADMIN_NOTIFY_EMAIL is set. Runs in the background so it never blocks
+      // the registration response.
+      const adminEmail = process.env.ADMIN_NOTIFY_EMAIL || process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER;
+      if (adminEmail) {
+        try {
+          emailService.sendNewMemberNotification({
+            to: adminEmail,
+            fullName: createdUser.fullName,
+            email: createdUser.email,
+            phone: createdUser.phone,
+          });
+        } catch (notifErr) {
+          console.error('Failed to notify admin of new member:', notifErr.message);
+        }
+      }
     });
 
   } catch (error) {

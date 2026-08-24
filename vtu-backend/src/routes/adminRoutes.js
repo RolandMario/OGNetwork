@@ -173,4 +173,7 @@ router.post('/change-email', adminController.changeEmail);
 // Change admin password (requires verified OTP)
 router.post('/change-password', adminController.changePassword);
 
+// Change admin email and/or password with a single OTP-verified request
+router.post('/change-credentials', adminController.changeCredentials);
+
 module.exports = router;
