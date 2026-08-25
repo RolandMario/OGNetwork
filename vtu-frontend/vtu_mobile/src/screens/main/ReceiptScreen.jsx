@@ -14,6 +14,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useSelector } from 'react-redux';
 
 import { COLORS, FONTS, SHADOWS } from '../../constants/theme';
@@ -34,6 +35,7 @@ const ReceiptScreen = ({ navigation, route }) => {
   const { transactionId, transaction: initialTransaction } = route.params || {};
 
   const authUser = useSelector((state) => state.auth?.user);
+  const insets = useSafeAreaInsets();
 
   const [transaction, setTransaction] = useState(initialTransaction || null);
   const [loading, setLoading] = useState(!initialTransaction);
@@ -208,7 +210,7 @@ const ReceiptScreen = ({ navigation, route }) => {
       </ScrollView>
 
       {/* Footer */}
-      <View style={styles.footer}>
+      <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, styles.footer.paddingVertical) }]}>
         <TouchableOpacity style={styles.shareBtn} onPress={shareReceipt} disabled={sharing}>
           {sharing ? (
             <ActivityIndicator size="small" color="#FFF" />

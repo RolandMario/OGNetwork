@@ -200,6 +200,27 @@ function buildRows(tx: Transaction) {
 
   return rows;
 }
+
+/**
+ * The plan label shown in the generated receipt for a purchased service.
+ * Mirrors the "Plan" row produced by buildRows() so the table and the receipt
+ * stay consistent. Non-bundle entries (airtime, funding, commission, ...) have
+ * no plan and fall back to an em dash.
+ */
+function getReceiptPlan(tx: Transaction) {
+  const d = tx.details || {};
+  switch (tx.type) {
+    case "DATA":
+      // Data sizes are stored as bare numbers by VTU providers ("10" = 10GB,
+      // "500" = 500MB) — normalise to a unitised label like the receipt does.
+      return formatDataPlanLabel(d.planName || d.plan_name) || d.planId || "—";
+    case "CABLE":
+    case "ELECTRICITY":
+      return d.planName || d.plan_name || d.planId || "—";
+    default:
+      return "—";
+  }
+}
 // ---------------------------------------------------------------------------
 // Receipt modal content — also rendered to a hidden element for printing
 // ---------------------------------------------------------------------------
@@ -256,6 +277,11 @@ export default function TransactionsPage() {
   const [filter, setFilter] = useState("ALL");
   const [search, setSearch] = useState("");
 
+  // Pagination state (50 transactions per page)
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
+
   // Receipt modal state
   const [selectedTx, setSelectedTx] = useState<Transaction | null>(null);
   const [receiptLoading, setReceiptLoading] = useState(false);
@@ -268,13 +294,13 @@ export default function TransactionsPage() {
     fetchTransactions();
   }, []);
 
-  const fetchTransactions = async () => {
+  const fetchTransactions = async (pageNum = 1) => {
     try {
       setLoading(true);
       const token = localStorage.getItem("adminToken");
       const tenantId = localStorage.getItem("tenantId") || "demo";
       
-      const res = await fetch(`${API_BASE}/admin/transactions`, {
+      const res = await fetch(`${API_BASE}/admin/transactions?page=${pageNum}&limit=50`, {
         headers: {
           Authorization: `Bearer ${token}`,
           "x-tenant-id": tenantId,
@@ -290,7 +316,11 @@ export default function TransactionsPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Failed to fetch transactions");
       
-      setTransactions(data.data?.transactions || data.data || []);
+      const result = data.data || {};
+      setTransactions(result.transactions || []);
+      setTotalPages(Number(result.pages ?? 1));
+      setTotalCount(Number(result.total ?? result.transactions?.length ?? 0));
+      setPage(pageNum);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -470,10 +500,10 @@ export default function TransactionsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Transactions</h1>
-          <p className="text-sm text-slate-500 mt-1">{transactions.length} total transactions</p>
+          <p className="text-sm text-slate-500 mt-1">{totalCount} total transactions</p>
         </div>
         <button
-          onClick={fetchTransactions}
+          onClick={() => fetchTransactions(page)}
           className="px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-50"
         >
           Refresh
@@ -526,6 +556,7 @@ export default function TransactionsPage() {
                   <th className="px-5 py-3">Reference</th>
                   <th className="px-5 py-3">User</th>
                   <th className="px-5 py-3">Type</th>
+                  <th className="px-5 py-3">Plan</th>
                   <th className="px-5 py-3">Amount</th>
                   <th className="px-5 py-3">Status</th>
                   <th className="px-5 py-3">Date</th>
@@ -535,7 +566,7 @@ export default function TransactionsPage() {
               <tbody className="divide-y divide-slate-100">
                 {filteredTransactions.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-5 py-8 text-center text-slate-500">No transactions found</td>
+                    <td colSpan={8} className="px-5 py-8 text-center text-slate-500">No transactions found</td>
                   </tr>
                 ) : (
                   filteredTransactions.map((tx) => {
@@ -556,6 +587,7 @@ export default function TransactionsPage() {
                             {tx.type}
                           </span>
                         </td>
+                        <td className="px-5 py-3 text-slate-700">{getReceiptPlan(tx)}</td>
                         <td className="px-5 py-3 font-medium">₦{(tx.amount / 100).toLocaleString()}</td>
                         <td className="px-5 py-3">
                           <span className={`status-badge ${getStatusColor(tx.status)}`}>
@@ -588,6 +620,31 @@ export default function TransactionsPage() {
               </tbody>
             </table>
           </div>
+
+          {/* Pagination (50 transactions per page) */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between px-5 py-4 border-t border-slate-100">
+              <span className="text-sm text-slate-500">
+                Page {page} of {totalPages} · {totalCount} transactions
+              </span>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => fetchTransactions(page - 1)}
+                  disabled={page <= 1}
+                  className="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Previous
+                </button>
+                <button
+                  onClick={() => fetchTransactions(page + 1)}
+                  disabled={page >= totalPages}
+                  className="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
