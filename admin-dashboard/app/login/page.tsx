@@ -36,11 +36,25 @@ export default function LoginPage() {
       }
 
       // Store admin token
-      localStorage.setItem("adminToken", data.token || data.data?.token);
+      const token = data.token || data.data?.token;
+      localStorage.setItem("adminToken", token);
       localStorage.setItem("adminUser", JSON.stringify(data.data?.user || data.user));
       localStorage.setItem("tenantId", "demo");
 
-      router.push("/");
+      // Mirror the token into a cookie so the server-side middleware guard
+      // (middleware.ts) grants access to the protected admin pages.
+      if (token) {
+        document.cookie = `adminToken=${encodeURIComponent(token)}; path=/; SameSite=Lax; Max-Age=${7 * 24 * 60 * 60}`;
+      }
+
+      // Return to the page the visitor originally tried to open (set by the
+      // middleware `from` param), falling back to the dashboard.
+      const from = new URLSearchParams(window.location.search).get("from");
+      const safeFrom =
+        from && from.startsWith("/") && !from.startsWith("//") && from !== "/login"
+          ? from
+          : "/";
+      router.replace(safeFrom);
     } catch (err: any) {
       setError(err.message);
     } finally {

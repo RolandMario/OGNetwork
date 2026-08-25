@@ -220,9 +220,9 @@ const SECTIONS: PolicySection[] = [
         <p>
           <strong>{COMPANY.name}</strong>
           <br />
-          Email: <a href="mailto:support@ognetwork.com">support@ognetwork.com</a>
+          Email: <a href="mailto:support@ognetwork.com">ogechigeorge077@gmail.com </a>
           <br />
-          Address: Ikeja, Lagos, Nigeria
+          Address: No 61 bishop smith Anglican church Agbadam road Ilorin, Kwara state.
         </p>
         <p>Last updated: 25 August 2026</p>
       </>

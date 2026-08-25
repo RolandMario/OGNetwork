@@ -81,17 +81,37 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     setIsAuthenticated(!!token);
     setIsLoading(false);
     setSidebarOpen(true)
+
+    // Keep the session cookie in sync with the login token so the server-side
+    // middleware guard (middleware.ts) keeps granting access. This also covers
+    // sessions that existed before cookie-based protection was added, and
+    // clears the cookie when the local session is gone.
+    if (token) {
+      document.cookie = `adminToken=${encodeURIComponent(token)}; path=/; SameSite=Lax`;
+    } else {
+      document.cookie = "adminToken=; path=/; Max-Age=0; SameSite=Lax";
+    }
+
+    // Security guard: without a successful login every protected page is
+    // redirected to /login. /privacy-policy is exempt (public legal page).
+    if (!token && pathname !== "/login" && pathname !== "/privacy-policy") {
+      router.replace("/login");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleLogout = () => {
     localStorage.removeItem("adminToken");
     localStorage.removeItem("adminUser");
+    // Clear the session cookie so the middleware guard locks the routes too.
+    document.cookie = "adminToken=; path=/; Max-Age=0; SameSite=Lax";
     setIsAuthenticated(false);
     router.push("/login");
   };
 
-  // Login page - no sidebar
-  if (pathname === "/login") {
+  // Public/standalone pages rendered without the admin sidebar: login and the
+  // privacy policy. The policy stays reachable without authenticating.
+  if (pathname === "/login" || pathname === "/privacy-policy") {
     return (
       <html lang="en">
         <body className="min-h-screen bg-slate-50">{children}</body>
@@ -112,10 +132,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     );
   }
 
+  // Not authenticated on a protected route — never render the page content.
+  // The effect above performs the /login redirect; show a brief safe screen.
   if (!isAuthenticated) {
     return (
       <html lang="en">
-        <body className="min-h-screen bg-slate-50">{children}</body>
+        <body className="min-h-screen flex items-center justify-center bg-slate-50">
+          <div className="flex flex-col items-center gap-3">
+            <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
+            <p className="text-slate-500 text-sm">Redirecting to login...</p>
+          </div>
+        </body>
       </html>
     );
   }
