@@ -74,6 +74,9 @@ router.post('/plans/sync/electricity', adminController.syncElectricityPlans);
 // Get summary (counts by service)
 router.get('/plans/summary', adminController.getPlansSummary);
 
+// Total / monthly data-plan volume (from receipts, starts at go-live cutoff)
+router.get('/plans/stats', adminController.getPlanStats);
+
 // Update single plan price
 router.patch('/plans/:id', adminController.updatePlanPrice);
 

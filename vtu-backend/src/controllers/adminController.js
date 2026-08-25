@@ -1170,6 +1170,135 @@ exports.getMonthlyProfits = async (req, res) => {
 };
 
 // ---------------------------------------------------------------------------
+// Plan Stats (total / monthly data-plan volume)
+// ---------------------------------------------------------------------------
+
+/**
+ * Go-live cutoff for plan tallies. The card on the admin transactions page
+ * "starts from zero from now" — i.e. only data purchases made on/after this
+ * moment count toward the totals. Everything before the cutoff (including all
+ * pre-existing/historical transaction rows) is excluded.
+ */
+const PLAN_STATS_START = new Date('2026-08-25T00:00:00.000Z');
+
+/**
+ * Parse a data-plan receipt value (e.g. the `planName`/`plan_name` stored on a
+ * DATA transaction's details) into a size expressed in MB.
+ *
+ * Unit conversions honoured exactly as required:
+ *   1 GB = 1024 MB,  1 TB = 1000 GB = 1,024,000 MB
+ *
+ * Supports "10GB", "500MB", "2.5GB", "1TB", "1.2 GB", "500KB", ... Bare numbers
+ * (no unit) fall back to the same heuristic used for data plans elsewhere in
+ * the codebase: sub-100 values/fractions → GB, hundreds → MB.
+ *
+ * @param {*} value
+ * @returns {number} size in MB, or 0 when no parseable size is present.
+ */
+function parsePlanSizeMB(value) {
+  const raw = String(value == null ? '' : value).trim();
+  if (!raw) return 0;
+
+  // Extract an optional number followed by a unit.
+  const match = raw.match(/([\d.]+)\s*(TB|GB|MB|KB)/i);
+  if (match) {
+    const num = parseFloat(match[1]);
+    if (!Number.isFinite(num) || num < 0) return 0;
+    const unit = match[2].toUpperCase();
+    if (unit === 'KB') return num / 1024;
+    if (unit === 'MB') return num;
+    if (unit === 'GB') return num * 1024;
+    if (unit === 'TB') return num * 1024 * 1000; // 1 TB = 1000 GB, 1 GB = 1024 MB
+    return 0;
+  }
+
+  // Bare number with no unit — apply the same magnitude heuristic used for
+  // plan labels elsewhere (bare "10" → "10GB", "500" → "500MB").
+  const bare = raw.match(/^(\d+(?:\.\d+)?)\s*$/);
+  if (bare) {
+    const num = parseFloat(bare[1]);
+    if (Number.isNaN(num) || num < 0) return 0;
+    return raw.includes('.') || num < 100 ? num * 1024 : num; // GB vs MB
+  }
+
+  return 0;
+}
+
+/**
+ * @desc    Total data-plan volume from receipts, split all-time vs a month.
+ *          Counts only purchases AFTER the go-live cutoff (starts from zero).
+ * @route   GET /api/v1/admin/plans/stats
+ * @access  Private, Admin only
+ * @query   ?month=8&year=2026 (optional — month/year for the monthly value)
+ */
+exports.getPlanStats = async (req, res) => {
+  try {
+    const Transaction = req.models.Transaction;
+
+    const month = Number(req.query.month);
+    const year = req.query.year !== undefined && req.query.year !== ''
+      ? Number(req.query.year)
+      : new Date().getFullYear();
+    const hasMonth = Number.isInteger(month) && month >= 1 && month <= 12;
+
+    // All >= cutoff, SUCCESS data purchases (only the fields we need).
+    const cursor = Transaction.find({
+      status: 'SUCCESS',
+      type: 'DATA',
+      createdAt: { $gte: PLAN_STATS_START },
+    })
+      .select('createdAt details.planName details.plan_name')
+      .lean()
+      .cursor();
+
+    let totalMB = 0;
+    let totalCount = 0;
+    let monthMB = 0;
+    let monthCount = 0;
+
+    // Optional month boundary — effective floor is the later of the month start
+    // and the go-live cutoff.
+    let monthStart = null;
+    let monthEnd = null;
+    if (hasMonth) {
+      const startOfMonth = new Date(year, month - 1, 1);
+      monthEnd = new Date(year, month, 0, 23, 59, 59, 999);
+      monthStart = startOfMonth > PLAN_STATS_START ? startOfMonth : PLAN_STATS_START;
+    }
+
+    for await (const tx of cursor) {
+      const d = tx.details || {};
+      const mb = parsePlanSizeMB(d.planName) || parsePlanSizeMB(d.plan_name);
+      if (!mb) continue;
+
+      totalMB += mb;
+      totalCount += 1;
+
+      if (monthStart && tx.createdAt >= monthStart && tx.createdAt <= monthEnd) {
+        monthMB += mb;
+        monthCount += 1;
+      }
+    }
+
+    res.status(200).json({
+      status: 'success',
+      data: {
+        totalMB,
+        totalCount,
+        monthMB,
+        monthCount,
+        month: hasMonth ? month : null,
+        year,
+        startDate: PLAN_STATS_START.toISOString(),
+      },
+    });
+  } catch (error) {
+    console.error('[adminController.getPlanStats] error:', error.message);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+// ---------------------------------------------------------------------------
 // Manual Transfer Account Management
 // ---------------------------------------------------------------------------
 

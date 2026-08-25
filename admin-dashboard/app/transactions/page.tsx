@@ -221,6 +221,37 @@ function getReceiptPlan(tx: Transaction) {
       return "—";
   }
 }
+
+// ---------------------------------------------------------------------------
+// Plan-stats volume helpers (total / monthly data-plan totals)
+// ---------------------------------------------------------------------------
+
+/** Format a size in MB into the largest fitting unit: MB < GB < TB.
+ *  Conversions: 1024 MB = 1 GB, 1000 GB = 1 TB (1 TB = 1,024,000 MB). */
+function formatVolumeMB(mb?: number) {
+  const v = Number(mb || 0);
+  if (v <= 0) return "0 MB";
+  const TB = 1024 * 1000; // 1 TB = 1000 GB × 1024 MB
+  const GB = 1024;
+  if (v >= TB) return `${(v / TB).toFixed(2)} TB`;
+  if (v >= GB) return `${(v / GB).toFixed(2)} GB`;
+  return `${v.toFixed(2)} MB`;
+}
+
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+interface PlanStats {
+  totalMB: number;
+  totalCount: number;
+  monthMB: number;
+  monthCount: number;
+  month: number | null;
+  year: number;
+  startDate?: string;
+}
 // ---------------------------------------------------------------------------
 // Receipt modal content — also rendered to a hidden element for printing
 // ---------------------------------------------------------------------------
@@ -282,17 +313,47 @@ export default function TransactionsPage() {
   const [totalPages, setTotalPages] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
 
+  // Plan-stats card state (total + monthly data-plan volume from receipts)
+  const now = new Date();
+  const [planStats, setPlanStats] = useState<PlanStats | null>(null);
+  const [statsLoading, setStatsLoading] = useState(false);
+  const [selectedMonth, setSelectedMonth] = useState(now.getMonth() + 1); // 1-12
+  const [selectedYear, setSelectedYear] = useState(now.getFullYear());
+
   // Receipt modal state
   const [selectedTx, setSelectedTx] = useState<Transaction | null>(null);
   const [receiptLoading, setReceiptLoading] = useState(false);
 
-  useEffect(() => {
-    if (!localStorage.getItem("adminToken")) {
-      router.push("/login");
-      return;
+  const fetchPlanStats = async (month: number, year: number) => {
+    try {
+      setStatsLoading(true);
+      const token = localStorage.getItem("adminToken");
+      const tenantId = localStorage.getItem("tenantId") || "demo";
+
+      const res = await fetch(`${API_BASE}/admin/plans/stats?month=${month}&year=${year}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "x-tenant-id": tenantId,
+        },
+      });
+
+      if (res.status === 401) {
+        localStorage.removeItem("adminToken");
+        router.push("/login");
+        return;
+      }
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Failed to fetch plan stats");
+
+      setPlanStats(data.data || null);
+    } catch (err: any) {
+      console.error("fetchPlanStats error:", err.message);
+      setPlanStats(null);
+    } finally {
+      setStatsLoading(false);
     }
-    fetchTransactions();
-  }, []);
+  };
 
   const fetchTransactions = async (pageNum = 1) => {
     try {
@@ -327,6 +388,15 @@ export default function TransactionsPage() {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (!localStorage.getItem("adminToken")) {
+      router.push("/login");
+      return;
+    }
+    fetchTransactions();
+    fetchPlanStats(selectedMonth, selectedYear);
+  }, []);
 
   const filteredTransactions = transactions.filter(tx => {
     const u = getUser(tx);
@@ -509,6 +579,77 @@ export default function TransactionsPage() {
           Refresh
         </button>
       </div>
+
+      {/* Plan-stats summary card */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+            Total Plans
+          </div>
+          <div className="mt-2 text-3xl font-extrabold text-slate-900">
+            {statsLoading && !planStats ? (
+              <span className="text-slate-300">—</span>
+            ) : (
+              formatVolumeMB(planStats?.totalMB)
+            )}
+          </div>
+          <div className="mt-1 text-xs text-slate-500">
+            {planStats?.totalCount != null ? `${planStats.totalCount} data plan${planStats.totalCount === 1 ? "" : "s"} purchased` : "—"}
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+              Total Plans
+            </div>
+            <div className="flex items-center gap-2">
+              <select
+                value={selectedMonth}
+                onChange={(e) => {
+                  const m = Number(e.target.value);
+                  setSelectedMonth(m);
+                  fetchPlanStats(m, selectedYear);
+                }}
+                className="px-1.5 py-1 rounded-md border border-slate-200 text-xs font-medium text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {MONTH_NAMES.map((name, idx) => (
+                  <option key={idx} value={idx + 1}>{name}</option>
+                ))}
+              </select>
+              <select
+                value={selectedYear}
+                onChange={(e) => {
+                  const y = Number(e.target.value);
+                  setSelectedYear(y);
+                  fetchPlanStats(selectedMonth, y);
+                }}
+                className="px-1.5 py-1 rounded-md border border-slate-200 text-xs font-medium text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {[now.getFullYear(), now.getFullYear() - 1, now.getFullYear() - 2].map((y) => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className="mt-2 text-3xl font-extrabold text-teal-700">
+            {statsLoading ? (
+              <span className="text-slate-300">—</span>
+            ) : (
+              formatVolumeMB(planStats?.monthMB)
+            )}
+          </div>
+          <div className="mt-1 text-xs text-slate-500">
+            {planStats?.monthCount != null
+              ? `${planStats.monthCount} data plan${planStats.monthCount === 1 ? "" : "s"} in ${MONTH_NAMES[selectedMonth - 1]} ${selectedYear}`
+              : "—"}
+          </div>
+        </div>
+      </div>
+      <p className="text-xs text-slate-400 -mt-2">
+        Plan totals count only successful data purchases from the go-live date (
+        {planStats?.startDate ? formatDate(planStats.startDate) : "Aug 25, 2026"}) onwards — pre-existing transactions are excluded.
+      </p>
 
       {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-3">
