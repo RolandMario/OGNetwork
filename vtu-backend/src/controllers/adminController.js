@@ -9,6 +9,7 @@ const crypto = require('crypto');
 const providerRegistry = require('../services/providerRegistry');
 const notificationService = require('../services/notificationService');
 const commissionService = require('../services/commissionService');
+const reconciliationService = require('../services/reconciliationService');
 
 // ---------------------------------------------------------------------------
 // Dashboard
@@ -248,6 +249,77 @@ exports.getTransactions = async (req, res) => {
   } catch (error) {
     console.error('[adminController.getTransactions] error:', error.message);
     res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+/**
+ * @desc    Get all UNCONFIRMED transactions (reconciliation queue)
+ * @route   GET /api/v1/admin/transactions/unconfirmed
+ * @access  Private, Admin only
+ *
+ * UNCONFIRMED = the provider outcome could not be verified at purchase time
+ * (timeout / network failure / HTTP 5xx). The wallet debit is PRESERVED until
+ * an admin resolves each via POST /transactions/:id/resolve.
+ */
+exports.getUnconfirmedTransactions = async (req, res) => {
+  try {
+    const Transaction = req.models.Transaction;
+    const { page = 1, limit = 50 } = req.query;
+
+    const query = { status: 'UNCONFIRMED' };
+
+    const transactions = await Transaction.find(query)
+      .sort({ createdAt: -1 })
+      .skip(Math.max(0, (parseInt(page) - 1)) * parseInt(limit))
+      .limit(parseInt(limit))
+      .populate('user', 'fullName email')
+      .lean();
+
+    const total = await Transaction.countDocuments(query);
+
+    res.status(200).json({
+      status: 'success',
+      data: { transactions, total, page: parseInt(page), pages: Math.ceil(total / parseInt(limit)) },
+    });
+  } catch (error) {
+    console.error('[adminController.getUnconfirmedTransactions] error:', error.message);
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+/**
+ * @desc    Resolve an UNCONFIRMED transaction manually
+ * @route   POST /api/v1/admin/transactions/:id/resolve
+ * @access  Private, Admin only
+ * @body    { resolution: 'SUCCESS' | 'FAILED', note?: string }
+ *
+ * SUCCESS → the provider delivered the order: the existing debit stands,
+ *          commission is credited best-effort.
+ * FAILED  → the provider did NOT deliver: the debit is refunded to the user's
+ *          wallet and the transaction is closed as FAILED.
+ */
+exports.resolveTransaction = async (req, res) => {
+  try {
+    const { Transaction, Wallet, AdminConfig } = req.models;
+
+    const updated = await reconciliationService.resolveTransaction({
+      transactionId: req.params.id,
+      resolution:     req.body?.resolution,
+      note:           req.body?.note,
+      Transaction,
+      Wallet,
+      AdminConfig,
+      adminUser:      req.user,
+    });
+
+    res.status(200).json({
+      status:  'success',
+      message: `Transaction resolved as ${req.body.resolution}.`,
+      data:    { transaction: updated },
+    });
+  } catch (error) {
+    console.error('[adminController.resolveTransaction] error:', error.message);
+    res.status(error.statusCode || 500).json({ status: 'error', message: error.message });
   }
 };
 

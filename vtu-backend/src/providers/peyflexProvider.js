@@ -35,19 +35,49 @@ function peyflexRequest(method, path, body = null) {
       },
     };
 
+    let settled = false;
+    // 55s ceiling (mirrors the axios providers). A timeout MUST NOT be treated
+    // as a definite failure: peyflex's synchronous API may have already
+    // processed the order when the socket goes quiet. The error carries
+    // code=ETIMEDOUT so errorClassifier.js marks the transaction UNCONFIRMED
+    // (wallet debit preserved) instead of auto-refunding it.
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      const err = new Error(`[peyflexProvider] Request timed out after 55s (${method} ${parsed.pathname})`);
+      err.code = 'ETIMEDOUT';
+      err.timeout = true;
+      if (typeof req.destroy === 'function') req.destroy(); // abort the socket
+      reject(err);
+    }, 55000);
+
     const req = https.request(options, (res) => {
       let data = '';
       res.on('data', (chunk) => { data += chunk; });
       res.on('end', () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
         try {
           resolve(JSON.parse(data));
         } catch (e) {
-          reject(new Error(`[peyflexProvider] Response parse error: ${e.message} — raw: ${data}`));
+          // A response ARRIVED but we could not read it. Most likely the
+          // provider processed the order — classify as ambiguous (UNCONFIRMED),
+          // never auto-refund.
+          const parseErr = new Error(`[peyflexProvider] Response parse error: ${e.message} — raw: ${data}`);
+          parseErr.parseError = true;
+          reject(parseErr);
         }
       });
     });
 
-    req.on('error', reject);
+    req.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (!err.code) err.code = err.errno || 'ECONNRESET'; // surface a code for the classifier
+      reject(err);
+    });
     if (payload) req.write(payload);
     req.end();
   });
@@ -75,6 +105,8 @@ async function purchaseAirtime({ network, amount, mobile_number }) {
   if (response.status !== 'SUCCESS') {
     const err = new Error(response.message || 'Airtime topup failed.');
     err.providerResponse = response;
+    err.isDefiniteProviderRejection = true; // explicit provider rejection — safe to auto-refund
+    err.statusCode = 400;
     throw err;
   }
 
@@ -111,6 +143,8 @@ async function purchaseData({ network, plan_code, mobile_number }) {
   if (response.status !== 'SUCCESS') {
     const err = new Error(response.message || 'Data purchase failed.');
     err.providerResponse = response;
+    err.isDefiniteProviderRejection = true; // explicit provider rejection — safe to auto-refund
+    err.statusCode = 400;
     throw err;
   }
 
@@ -170,6 +204,8 @@ async function subscribeCable({ identifier, plan, iuc, phone, amount }) {
   if (!response.identifier) {
     const err = new Error(response.message || 'Cable subscription failed.');
     err.providerResponse = response;
+    err.isDefiniteProviderRejection = true; // explicit provider rejection — safe to auto-refund
+    err.statusCode = 400;
     throw err;
   }
 
@@ -200,6 +236,8 @@ async function verifyMeter({ meter, plan, type = 'prepaid' }) {
   if (response.status !== 'SUCCESS') {
     const err = new Error(response.message || 'Meter verification failed.');
     err.providerResponse = response;
+    err.isDefiniteProviderRejection = true; // explicit provider rejection — fail fast, don't attempt purchase
+    err.statusCode = 400;
     throw err;
   }
 
@@ -239,6 +277,8 @@ async function purchaseElectricity({ meter, plan, amount, phone, type = 'prepaid
     const err = new Error(extractProviderMessage(response, 'Electricity purchase failed.'));
     err.providerResponse = response;
     err.responseData = response; // carry the raw body so the real provider message is surfaced
+    err.isDefiniteProviderRejection = true; // explicit provider rejection — safe to auto-refund
+    err.statusCode = 400;
     throw err;
   }
 

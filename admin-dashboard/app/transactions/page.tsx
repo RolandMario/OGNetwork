@@ -324,6 +324,12 @@ export default function TransactionsPage() {
   const [selectedTx, setSelectedTx] = useState<Transaction | null>(null);
   const [receiptLoading, setReceiptLoading] = useState(false);
 
+  // Manual reconciliation state (UNCONFIRMED transactions)
+  const [resolving, setResolving] = useState(false);
+  const [resolveNote, setResolveNote] = useState("");
+  const [resolveMessage, setResolveMessage] = useState<string | null>(null);
+  const [resolveError, setResolveError] = useState<string | null>(null);
+
   const fetchPlanStats = async (month: number, year: number) => {
     try {
       setStatsLoading(true);
@@ -418,6 +424,7 @@ export default function TransactionsPage() {
       case "SUCCESS": return "status-badge-success";
       case "PENDING": return "status-badge-pending";
       case "FAILED": return "status-badge-failed";
+      case "UNCONFIRMED": return "status-badge-inactive";
       default: return "status-badge-inactive";
     }
   };
@@ -452,6 +459,50 @@ export default function TransactionsPage() {
   };
 
   const closeReceipt = () => setSelectedTx(null);
+
+  /**
+   * Manual reconciliation: resolve an UNCONFIRMED (or stale PENDING) purchase.
+   * SUCCESS → provider delivered → debit stands, commission credited.
+   * FAILED  → provider did not deliver → debit refunded to the user's wallet.
+   */
+  const resolveTransaction = async (resolution: "SUCCESS" | "FAILED") => {
+    const tx = selectedTx;
+    if (!tx) return;
+    const confirmMsg =
+      resolution === "SUCCESS"
+        ? "Mark this transaction SUCCESS?\n\nThe customer likely received the service. The existing debit will be kept and the customer's commission credited best-effort."
+        : "Mark this transaction FAILED?\n\nThe customer will be refunded the full amount to their wallet.";
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      setResolving(true);
+      setResolveError(null);
+      setResolveMessage(null);
+      const token = localStorage.getItem("adminToken");
+      const tenantId = localStorage.getItem("tenantId") || "demo";
+      const res = await fetch(`${API_BASE}/admin/transactions/${tx._id}/resolve`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+          "x-tenant-id": tenantId,
+        },
+        body: JSON.stringify({ resolution, note: resolveNote.trim() || undefined }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Failed to resolve transaction");
+
+      setResolveMessage(data.message || `Transaction resolved as ${resolution}.`);
+      // Refresh the list so the resolved row reflects the new status, and update
+      // the open receipt with the server's authoritative transaction object.
+      fetchTransactions(page);
+      if (data.data?.transaction) setSelectedTx(data.data.transaction);
+    } catch (err: any) {
+      setResolveError(err.message || "Failed to resolve transaction.");
+    } finally {
+      setResolving(false);
+    }
+  };
 
   const downloadTxt = () => {
     if (!selectedTx) return;
@@ -666,7 +717,7 @@ export default function TransactionsPage() {
           />
         </div>
         <div className="flex gap-2">
-          {["ALL", "SUCCESS", "PENDING", "FAILED"].map((f) => (
+          {["ALL", "SUCCESS", "PENDING", "UNCONFIRMED", "FAILED"].map((f) => (
             <button
               key={f}
               onClick={() => setFilter(f)}
@@ -846,6 +897,61 @@ export default function TransactionsPage() {
                 </div>
               ) : (
                 <ReceiptView tx={selectedTx} />
+              )}
+
+              {/* Manual reconciliation panel (UNCONFIRMED / stale PENDING) */}
+              {(selectedTx.status === "UNCONFIRMED" ||
+                (selectedTx.status === "PENDING" &&
+                  ["AIRTIME", "DATA", "CABLE", "ELECTRICITY"].includes(selectedTx.type))) && (
+                <div className="mt-6 border-t border-slate-100 pt-5">
+                  <div className="flex items-center gap-2 mb-1">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 text-amber-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+                    </svg>
+                    <h4 className="text-sm font-bold text-slate-900">Manual Reconciliation</h4>
+                  </div>
+                  <p className="text-xs text-slate-500 mb-3">
+                    The provider outcome could not be confirmed at purchase time. After checking with the VTU
+                    provider, mark this order <strong>SUCCESS</strong> (delivered — the existing wallet debit stands)
+                    or <strong>FAILED</strong> (not delivered — the customer is refunded automatically).
+                  </p>
+
+                  <textarea
+                    value={resolveNote}
+                    onChange={(e) => setResolveNote(e.target.value)}
+                    rows={2}
+                    placeholder="Optional reconciliation note (e.g. 'Confirmed delivered via provider portal — ref 12345')"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none resize-none"
+                  />
+
+                  {resolveMessage && (
+                    <div className="mt-3 bg-teal-50 border border-teal-200 rounded-lg p-3 text-teal-700 text-sm">
+                      {resolveMessage}
+                    </div>
+                  )}
+                  {resolveError && (
+                    <div className="mt-3 bg-red-50 border border-red-200 rounded-lg p-3 text-red-600 text-sm">
+                      {resolveError}
+                    </div>
+                  )}
+
+                  <div className="mt-4 flex gap-3">
+                    <button
+                      onClick={() => resolveTransaction("SUCCESS")}
+                      disabled={resolving}
+                      className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-lg bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 text-sm font-semibold transition-colors"
+                    >
+                      {resolving ? "Working..." : "✓ Mark SUCCESS"}
+                    </button>
+                    <button
+                      onClick={() => resolveTransaction("FAILED")}
+                      disabled={resolving}
+                      className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-lg bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 text-sm font-semibold transition-colors"
+                    >
+                      {resolving ? "Refunding..." : "✕ Mark FAILED (refund)"}
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
           </div>

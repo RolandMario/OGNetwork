@@ -26,6 +26,7 @@ const userRoutes      = require('./src/routes/userRoutes');
 const vtuRoutes = require('./src/routes/vtuRoutes');
 const adminRoutes = require('./src/routes/adminRoutes');
 const walletRoutes = require('./src/routes/walletRoutes');
+const reconciliationService = require('./src/services/reconciliationService');
 const app = express();
 const PORT = process.env.PORT || 5001;
 const NODE_ENV = process.env.NODE_ENV || 'development';
@@ -209,6 +210,46 @@ app.use((err, _req, res, _next) => {
 });
 
 // ---------------------------------------------------------------------------
+// Reconciliation sweeper — background maintenance for UNCONFIRMED transactions.
+//
+// Runs periodically across every connected tenant DB:
+//   1. Surfaces stale PENDING purchases (debit applied but the process died
+//      before the provider call finished) as UNCONFIRMED so they enter the
+//      admin reconciliation queue.
+//   2. Emails admins a digest whenever open UNCONFIRMED transactions exist.
+//
+// Set RECONCILIATION_SWEEP_INTERVAL_MS=0 to disable. Never auto-resolves and
+// never auto-refunds — money stays debited until an admin confirms the outcome.
+// ---------------------------------------------------------------------------
+const RECONCILIATION_SWEEP_INTERVAL_MS = Number(process.env.RECONCILIATION_SWEEP_INTERVAL_MS || 60 * 60 * 1000);
+
+let reconciliationTimer = null;
+
+async function runReconciliationSweep() {
+  try {
+    const { getAllTenantConnections } = require('./src/services/tenantDbService');
+    let done = 0;
+    for (const [tenantId, connection] of Object.entries(getAllTenantConnections())) {
+      const Transaction = connection.models?.Transaction;
+      const User = connection.models?.User;
+      if (!Transaction || !User) continue;
+      await reconciliationService.sweepStaleUnconfirmed({ Transaction, User });
+      done += 1;
+    }
+    console.log(`[reconciliation] Sweep pass finished across ${done} tenant connection(s).`);
+  } catch (err) {
+    console.error('[reconciliation] Sweep pass error (non-fatal):', err.message);
+  }
+}
+
+function startReconciliationSweeper() {
+  if (!RECONCILIATION_SWEEP_INTERVAL_MS || reconciliationTimer) return;
+  reconciliationTimer = setInterval(runReconciliationSweep, RECONCILIATION_SWEEP_INTERVAL_MS);
+  setTimeout(runReconciliationSweep, 30 * 1000); // first pass shortly after boot (non-blocking)
+  console.log(`[reconciliation] Sweeper scheduled every ${Math.round(RECONCILIATION_SWEEP_INTERVAL_MS / 60000)} min.`);
+}
+
+// ---------------------------------------------------------------------------
 // Startup sequence (matches documented order):
 //   1. loadTenantSecrets()   — master tenant credentials
 //   2. connectAllTenantDbs() — per-tenant DB connections
@@ -239,6 +280,7 @@ if (NODE_ENV !== 'production') {
       await connectAllTenantDbs();
 
       console.log('[BOOT] All tenant DB connections established.');
+      startReconciliationSweeper();
     } catch (err) {
       console.error('[BOOT] Startup warning (non-fatal):', err.message);
       console.error('[BOOT] The server will still start. Lazy fallback will retry connections on first request.');
@@ -266,6 +308,7 @@ if (NODE_ENV !== 'production') {
       await connectAllTenantDbs();
 
       console.log('[BOOT] All tenant DB connections established.');
+      startReconciliationSweeper();
     } catch (err) {
       console.error('[BOOT] Startup warning (non-fatal):', err.message);
       console.error('[BOOT] Lazy fallback will retry connections on first request.');

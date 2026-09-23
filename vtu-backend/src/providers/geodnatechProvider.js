@@ -8,7 +8,7 @@
 // Base URL: https://geodnatech.com/api
 
 const axios = require('axios');
-const { createApiClient, getNetworkCode, successResponse, extractErrorMessage, extractProviderMessage, isSuccessResponse, describeHttpError, resolveCableSubscribe } = require('./baseProvider');
+const { createApiClient, getNetworkCode, successResponse, extractErrorMessage, extractProviderMessage, isSuccessResponse, describeHttpError, resolveCableSubscribe, wrapProviderError } = require('./baseProvider');
 
 const API_KEY = process.env.GEODNATECH_API_KEY;
 const BASE_URL = process.env.GEODNATECH_BASE_URL || 'https://geodnatech.com/api';
@@ -76,9 +76,12 @@ async function purchaseAirtime({ network, amount, mobile_number }) {
       });
     }
 
-    throw new Error(data.api_response || data.message || data.response || 'Airtime purchase failed');
+    throw Object.assign(new Error(data.api_response || data.message || data.response || 'Airtime purchase failed'), {
+      isDefiniteProviderRejection: true, // explicit provider rejection — safe to auto-refund
+      statusCode: 400,
+    });
   } catch (error) {
-    throw new Error(`[geodnatech] purchaseAirtime: ${extractErrorMessage(error, 'Airtime purchase failed')}`);
+    throw wrapProviderError({ providerName: 'geodnatech', operation: 'purchaseAirtime', error, fallback: 'Airtime purchase failed' });
   }
 }
 
@@ -199,9 +202,12 @@ async function purchaseData({ network, plan_code, mobile_number }) {
       });
     }
 
-    throw new Error(data.api_response || data.message || data.response || 'Data purchase failed');
+    throw Object.assign(new Error(data.api_response || data.message || data.response || 'Data purchase failed'), {
+      isDefiniteProviderRejection: true, // explicit provider rejection — safe to auto-refund
+      statusCode: 400,
+    });
   } catch (error) {
-    throw new Error(`[geodnatech] purchaseData: ${extractErrorMessage(error, 'Data purchase failed')}`);
+    throw wrapProviderError({ providerName: 'geodnatech', operation: 'purchaseData', error, fallback: 'Data purchase failed' });
   }
 }
 
@@ -312,9 +318,12 @@ async function subscribeCable({ identifier, plan, iuc, phone, amount }) {
       });
     }
 
-    throw new Error(data.api_response || data.message || data.response || 'Cable subscription failed');
+    throw Object.assign(new Error(data.api_response || data.message || data.response || 'Cable subscription failed'), {
+      isDefiniteProviderRejection: true, // explicit provider rejection — safe to auto-refund
+      statusCode: 400,
+    });
   } catch (error) {
-    throw new Error(`[geodnatech] subscribeCable: ${extractErrorMessage(error, 'Cable subscription failed')}`);
+    throw wrapProviderError({ providerName: 'geodnatech', operation: 'subscribeCable', error, fallback: 'Cable subscription failed' });
   }
 }
 
@@ -627,6 +636,8 @@ async function purchaseElectricity({ meter, plan, amount, phone, type = 'prepaid
 
     const err = new Error(extractProviderMessage(data, 'Electricity purchase failed'));
     err.responseData = data; // carry the raw body so the real provider message is surfaced
+    err.isDefiniteProviderRejection = true; // explicit provider rejection — safe to auto-refund
+    err.statusCode = 400;
     throw err;
   } catch (error) {
     // DEBUG LOGGING: dump the raw provider error (status, body, request) so the
@@ -645,7 +656,7 @@ async function purchaseElectricity({ meter, plan, amount, phone, type = 'prepaid
         data:   error.config?.data,
       },
     });
-    throw new Error(`[geodnatech] purchaseElectricity: ${extractErrorMessage(error, 'Electricity purchase failed')}`);
+    throw wrapProviderError({ providerName: 'geodnatech', operation: 'purchaseElectricity', error, fallback: 'Electricity purchase failed' });
   }
 }
 

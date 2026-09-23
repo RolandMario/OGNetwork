@@ -184,7 +184,49 @@ async function sendOtpEmail({ to, otp, action }) {
   }
 }
 
+/**
+ * Send a generic HTML digest email (used by the reconciliation service for the
+ * UNCONFIRMED transactions digest). Falls back to a console log when SMTP is
+ * not configured.
+ *
+ * @param {Object}  opts
+ * @param {string|string[]} opts.to      - recipient email(s)
+ * @param {string}  opts.subject
+ * @param {string}  opts.html
+ * @returns {Promise<{sent:boolean, messageId?:string, reason?:string}>}
+ */
+async function sendAdminDigest({ to, subject, html }) {
+  const recipients = Array.isArray(to) ? to : [to];
+  const cleanTo = recipients.filter(Boolean).map((s) => String(s).trim()).filter(Boolean);
+  if (!cleanTo.length) return { sent: false, reason: 'no recipients' };
+
+  const t = getTransporter();
+
+  if (!t) {
+    console.log('============================================================');
+    console.log(`[emailService] [DIGEST] To: ${cleanTo.join(', ')}`);
+    console.log(`[emailService] [DIGEST] Subject: ${subject}`);
+    console.log('============================================================');
+    return { sent: true, messageId: 'console-dev' };
+  }
+
+  try {
+    const info = await t.sendMail({
+      from: `"${FROM_NAME}" <${FROM_EMAIL}>`,
+      to: cleanTo.join(', '),
+      subject,
+      html,
+    });
+    console.log(`[emailService] Admin digest sent to ${cleanTo.join(', ')}: ${info.messageId}`);
+    return { sent: true, messageId: info.messageId };
+  } catch (error) {
+    console.error(`[emailService] Failed to send admin digest to ${cleanTo.join(', ')}:`, error.message);
+    return { sent: false, reason: error.message };
+  }
+}
+
 module.exports = {
   sendOtpEmail,
   sendNewMemberNotification,
+  sendAdminDigest,
 };

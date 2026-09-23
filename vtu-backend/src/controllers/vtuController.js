@@ -6,6 +6,7 @@ const vtuService = require('../services/vtuService');
 const providerRegistry = require('../services/providerRegistry');
 const adminService = require('../services/adminService');
 const commissionService = require('../services/commissionService');
+const { classifyProviderError, isAmbiguousProviderError } = require('../services/errorClassifier');
 
 // ---------------------------------------------------------------------------
 // Helper — debit wallet and create a PENDING transaction
@@ -72,6 +73,60 @@ async function reverseAndFail({ transaction, previousBalance, Wallet, Transactio
   } catch (err) {
     console.error('[vtuController] CRITICAL: Reversal failed!', err.message, 'Transaction:', transaction._id);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Helper — finalise a purchase that failed AFTER the wallet was debited.
+//
+// THE critical fix for the "service delivered for free" bug. The providers' VTU
+// APIs expose NO status-query endpoint, so a timeout / connection failure /
+// HTTP 5xx means the order MAY have been processed on the provider's side even
+// though we saw an error. In that case we must NOT auto-refund (the old
+// unconditional reverseAndFail() is what created the mismatch: user got the
+// service AND their money back). Instead the transaction is marked UNCONFIRMED
+// — the debit stays — and an admin manually reconciles it via the admin console.
+//
+// Only DEFINITE failures (the provider provably rejected the order) keep the
+// historical auto-refund behaviour.
+//
+// @returns {Object|null} A 202 'processing' response descriptor for ambiguous
+//   failures; `null` for definite failures (the caller keeps its existing
+//   error response path).
+// ---------------------------------------------------------------------------
+async function finalizePurchaseFailure({ transaction, previousBalance, Wallet, Transaction, error, providerName, operation }) {
+  const cls = classifyProviderError({ error, providerName, operation });
+
+  if (cls.outcome === 'ambiguous') {
+    const reason = cls.reason || 'Provider outcome could not be confirmed.';
+    await Transaction.findOneAndUpdate(
+      { _id: transaction._id },
+      {
+        status:        'UNCONFIRMED',
+        failureReason: reason,
+        details:       { ...transaction.details, failureReason: reason },
+      }
+    );
+    console.log(
+      `[vtuController] ${operation} — AMBIGUOUS provider failure. ` +
+      `Transaction ${transaction._id} marked UNCONFIRMED; wallet debit PRESERVED (no refund). Reason: ${reason}`
+    );
+    return {
+      statusCode: 202,
+      status:     'processing',
+      message:    'We are confirming your transaction. If it went through it will show as successful shortly — please check your transaction history before retrying.',
+      data:       { id: transaction._id, reference: transaction.transactionReference },
+    };
+  }
+
+  // Definite failure — the provider rejected the order; safe to auto-refund.
+  await reverseAndFail({
+    transaction,
+    previousBalance,
+    Wallet,
+    Transaction,
+    reason: cls.reason || error.message || 'Transaction failed.',
+  });
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -591,6 +646,7 @@ exports.buyAirtime = async (req, res) => {
   }
 
   let txData = null;
+  let activeProviderName = null;
 
   try {
     txData = await debitWalletAndCreateTx({
@@ -603,6 +659,7 @@ exports.buyAirtime = async (req, res) => {
     });
 
     const airtimeProvider = await providerRegistry.getProvider('airtime', req.models.AdminConfig);
+    activeProviderName = airtimeProvider.name;
     const providerResponse = await airtimeProvider.purchaseAirtime({ network, amount: Number(amount), mobile_number });
 
     // Calculate airtime profit based on user level percentage
@@ -656,7 +713,18 @@ exports.buyAirtime = async (req, res) => {
 
   } catch (error) {
     console.error('buyAirtime error:', error.message);
-    if (txData) await reverseAndFail({ transaction: txData.transaction, previousBalance: txData.previousBalance, Wallet, Transaction, reason: error.message });
+    if (txData) {
+      const unconfirmed = await finalizePurchaseFailure({
+        transaction:      txData.transaction,
+        previousBalance:  txData.previousBalance,
+        Wallet,
+        Transaction,
+        error,
+        providerName:     activeProviderName,
+        operation:        'buyAirtime',
+      });
+      if (unconfirmed) return res.status(unconfirmed.statusCode).json(unconfirmed);
+    }
     res.status(error.statusCode || 500).json({ status: 'error', message: error.message });
   }
 };
@@ -688,6 +756,7 @@ exports.buyData = async (req, res) => {
   }
 
   let txData = null;
+  let activeProviderName = null;
 
   try {
     // 1. Look up plan from DB — get ourPrice (what user pays)
@@ -726,6 +795,7 @@ exports.buyData = async (req, res) => {
 
     // 3. Call Peyflex — they charge at providerPrice via plan_code
     const dataProvider = await providerRegistry.getProvider('data', req.models.AdminConfig);
+    activeProviderName = dataProvider.name;
     const providerResponse = await dataProvider.purchaseData({ network, plan_code, mobile_number });
 
     // 4. Calculate profit = (userPrice - providerPrice) * 100 (in kobo)
@@ -782,7 +852,18 @@ exports.buyData = async (req, res) => {
 
   } catch (error) {
     console.error('buyData error:', error.message);
-    if (txData) await reverseAndFail({ transaction: txData.transaction, previousBalance: txData.previousBalance, Wallet, Transaction, reason: error.message });
+    if (txData) {
+      const unconfirmed = await finalizePurchaseFailure({
+        transaction:      txData.transaction,
+        previousBalance:  txData.previousBalance,
+        Wallet,
+        Transaction,
+        error,
+        providerName:     activeProviderName,
+        operation:        'buyData',
+      });
+      if (unconfirmed) return res.status(unconfirmed.statusCode).json(unconfirmed);
+    }
     res.status(error.statusCode || 500).json({ status: 'error', message: error.message });
   }
 };
@@ -812,6 +893,7 @@ exports.subscribeCable = async (req, res) => {
   }
 
   let txData = null;
+  let activeProviderName = null;
 
   try {
     // 1. Look up plan from DB
@@ -839,6 +921,7 @@ exports.subscribeCable = async (req, res) => {
 
     // 3. Call Peyflex at providerPrice (amount determined by plan on their end)
     const cableProvider = await providerRegistry.getProvider('cable', req.models.AdminConfig);
+    activeProviderName = cableProvider.name;
     const providerResponse = await cableProvider.subscribeCable({
       identifier,
       plan,
@@ -883,7 +966,18 @@ exports.subscribeCable = async (req, res) => {
 
   } catch (error) {
     console.error('subscribeCable error:', error.message);
-    if (txData) await reverseAndFail({ transaction: txData.transaction, previousBalance: txData.previousBalance, Wallet, Transaction, reason: error.message });
+    if (txData) {
+      const unconfirmed = await finalizePurchaseFailure({
+        transaction:      txData.transaction,
+        previousBalance:  txData.previousBalance,
+        Wallet,
+        Transaction,
+        error,
+        providerName:     activeProviderName,
+        operation:        'subscribeCable',
+      });
+      if (unconfirmed) return res.status(unconfirmed.statusCode).json(unconfirmed);
+    }
     res.status(error.statusCode || 500).json({ status: 'error', message: error.message });
   }
 };
@@ -917,6 +1011,7 @@ exports.buyElectricity = async (req, res) => {
   }
 
   let txData = null;
+  let activeProviderName = null;
 
   try {
     // 1. Look up plan from DB — validate amount range
@@ -962,6 +1057,7 @@ exports.buyElectricity = async (req, res) => {
     //    the pre-flight meter check below and the purchase loop).
     const candidates = await getElectricityProviderCandidates(req.models.AdminConfig);
     const primaryProvider = candidates[0]; // the admin-configured (ACTIVE) provider
+    activeProviderName = primaryProvider.name;
 
     console.log(
       `[vtuController] buyElectricity — ACTIVE electricity provider: "${primaryProvider.name}" | ` +
@@ -1015,6 +1111,7 @@ exports.buyElectricity = async (req, res) => {
     let providerError = null;
     let primaryError = null; // error from the ACTIVE (admin-configured) provider
     let purchasedViaProvider = null; // name of the provider that actually fulfilled the purchase
+    const providerErrors = []; // every failure, so ambiguity can be aggregated
     for (const electricityProvider of candidates) {
       try {
         providerResponse = await electricityProvider.purchaseElectricity({
@@ -1028,6 +1125,7 @@ exports.buyElectricity = async (req, res) => {
         break; // success — stop trying further providers
       } catch (err) {
         providerError = err;
+        providerErrors.push(err);
         if (electricityProvider === primaryProvider) primaryError = err;
         console.warn(`[vtuController] buyElectricity via "${electricityProvider.name}" failed: ${err.message}`);
       }
@@ -1039,6 +1137,14 @@ exports.buyElectricity = async (req, res) => {
       // always mentioning the final provider in the list.
       const primaryOrLast = primaryError || providerError || new Error('Electricity purchase failed for all providers.');
       primaryOrLast.message = `${primaryOrLast.message} (tried providers: ${candidates.map((c) => c.name).join(', ')})`;
+
+      // CRITICAL: if ANY provider failed ambiguously (timeout / network blip /
+      // 5xx), that provider may have already processed and delivered the order.
+      // The whole failed purchase is therefore AMBIGUOUS — never auto-refund,
+      // even if a later fallback provider returned a definite rejection.
+      if (providerErrors.some((e) => isAmbiguousProviderError(e))) {
+        primaryOrLast.isAmbiguousProviderFailure = true;
+      }
       throw primaryOrLast;
     }
 
@@ -1094,14 +1200,27 @@ exports.buyElectricity = async (req, res) => {
 
   } catch (error) {
     console.error('buyElectricity error:', error.message);
-    if (txData) await reverseAndFail({ transaction: txData.transaction, previousBalance: txData.previousBalance, Wallet, Transaction, reason: error.message });
+    if (txData) {
+      const unconfirmed = await finalizePurchaseFailure({
+        transaction:      txData.transaction,
+        previousBalance:  txData.previousBalance,
+        Wallet,
+        Transaction,
+        error,
+        providerName:     activeProviderName,
+        operation:        'buyElectricity',
+      });
+      if (unconfirmed) return res.status(unconfirmed.statusCode).json(unconfirmed);
+    }
 
     let message = error.message;
 
     // The purchase sum is debited from the VTU provider's RESELLER account, not
     // the customer's app wallet. If the provider reports a low balance, make that
     // unmistakably clear so the admin funds the right account instead of chasing
-    // code bugs (and so the customer knows they were auto-refunded).
+    // code bugs (and so the customer knows they were auto-refunded). This only
+    // runs on DEFINITE failures (ambiguous failures are returned above WITHOUT
+    // an automatic refund, so the "automatically refunded" wording must not run).
     if (/insufficient balance|your current balance/i.test(message)) {
       message = `${message} — the VTU provider's API account is low on funds. ` +
         `Fund the active electricity provider's account and retry (any debited amount was automatically refunded).`;

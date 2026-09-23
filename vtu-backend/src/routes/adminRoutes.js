@@ -30,6 +30,15 @@ router.patch('/users/:id/level', adminController.updateUserLevel);
 // ---------------------------------------------------------------------------
 router.get('/transactions', adminController.getTransactions);
 
+// Reconciliation queue — open UNCONFIRMED purchases (provider outcome unknown,
+// wallet debit preserved). MUST be registered before /transactions/:id so the
+// literal "unconfirmed" segment is not captured as an id.
+router.get('/transactions/unconfirmed', adminController.getUnconfirmedTransactions);
+
+// Resolve an UNCONFIRMED (or stale PENDING) purchase: 'SUCCESS' (delivered —
+// keep the debit) or 'FAILED' (not delivered — refund the customer).
+router.post('/transactions/:id/resolve', adminController.resolveTransaction);
+
 // ---------------------------------------------------------------------------
 // Wallets
 // ---------------------------------------------------------------------------

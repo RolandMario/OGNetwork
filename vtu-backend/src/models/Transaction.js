@@ -9,8 +9,29 @@ const TransactionSchema = new mongoose.Schema({
   },
   amount: { type: Number, required: true }, // In base unit (Kobo)
   
-  // Status flow: PENDING -> SUCCESS or FAILED
-  status: { type: String, enum: ['PENDING', 'SUCCESS', 'FAILED', 'REVERSED'], default: 'PENDING' },
+  // Status flow: PENDING -> SUCCESS | FAILED | UNCONFIRMED
+  //  - PENDING      — wallet debited, provider call in flight
+  //  - SUCCESS      — provider confirmed the order (service delivered)
+  //  - FAILED       — provider DEFINITIVELY rejected the order (auto-refunded)
+  //  - UNCONFIRMED  — provider outcome UNKNOWN (timeout / network failure / 5xx).
+  //                   The wallet debit is PRESERVED until an admin reconciles:
+  //                   the order may have been delivered even though we never
+  //                   got a successful response. NEVER auto-refund this state.
+  //  - REVERSED     — legacy status (see reverseAndFail; kept for history)
+  status: { type: String, enum: ['PENDING', 'SUCCESS', 'FAILED', 'UNCONFIRMED', 'REVERSED'], default: 'PENDING' },
+
+  // Why the transaction did not complete normally. Populated when a purchase
+  // fails (details also carry `failureReason` for backward compat with the
+  // existing receipt/history UIs) — and always set when a transaction is
+  // marked UNCONFIRMED so the reconciliation queue shows the exact provider
+  // error that made the outcome ambiguous.
+  failureReason: { type: String, default: '' },
+
+  // Reconciliation audit trail — set when an admin manually resolves an
+  // UNCONFIRMED transaction via the admin console.
+  resolvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+  resolvedAt: { type: Date, default: null },
+  resolutionNote: { type: String, default: '' },
 
   // Profit amount in kobo (ourPrice - providerPrice for data/cable, surcharge for electricity, % for airtime)
   profit: { type: Number, default: 0 },

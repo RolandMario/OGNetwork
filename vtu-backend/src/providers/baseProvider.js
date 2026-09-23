@@ -31,7 +31,13 @@ function createApiClient(baseURL, apiKey, authScheme = 'Token') {
       'Content-Type': 'application/json',
       Accept: 'application/json',
     },
-    timeout: 30000, // 30 seconds
+    timeout: 55000, // 55 seconds — see note below
+    // NOTE: the 55s timeout is deliberate. Provider purchase endpoints are
+    // ambiguous by nature: a timeout tells us the provider MAY have processed
+    // the order (the reseller APIs expose no status-query endpoint). A short
+    // timeout would manufacture ambiguous failures that we can't resolve, so
+    // we give providers generous time to respond and classify any timeout as
+    // an UNCONFIRMED (never auto-refunded) transaction.
   });
 }
 
@@ -148,6 +154,60 @@ function extractErrorMessage(error, fallback = 'Service temporarily unavailable'
   }
   if (typeof error === 'string' && error.trim()) return error.trim();
   return (error && error.message) || fallback;
+}
+
+/**
+ * Wrap a provider error with its original failure metadata preserved, so the
+ * error classifier (errorClassifier.js) can decide whether a purchase failure
+ * was DEFINITE (provider rejected the order — safe to auto-refund) or
+ * AMBIGUOUS (timeout / network blink / 5xx — the provider may have processed
+ * the order, so the wallet debit must stay and the transaction must be marked
+ * UNCONFIRMED for manual admin reconciliation).
+ *
+ * Every purchase-related catch block in the providers should throw through this
+ * helper instead of `throw new Error(\`[...] ...\`)`, which currently strips the
+ * axios HTTP status, the node network error code, and the raw provider body.
+ *
+ * @param {Object}  opts
+ * @param {string}  opts.providerName - provider key, e.g. 'peyflex'
+ * @param {string}  opts.operation    - method name, e.g. 'purchaseData'
+ * @param {Error}   opts.error        - the caught error (axios or node network error)
+ * @param {string}  [opts.fallback]   - fallback human message
+ * @returns {Error} wrapped error carrying httpStatus / networkCode / providerResponse
+ */
+function wrapProviderError({ providerName, operation, error, fallback }) {
+  const wrapped = new Error(`[${providerName}] ${operation}: ${extractErrorMessage(error, fallback)}`);
+
+  // Preserve an explicitly-set client-facing HTTP status (e.g. providers that
+  // surface a business rejection as 400 with isDefiniteProviderRejection).
+  if (error && error.statusCode) wrapped.statusCode = error.statusCode;
+
+  // The provider's HTTP response status (axios 4xx/5xx) — the single most
+  // important classification signal (4xx → definite, 5xx → ambiguous).
+  wrapped.httpStatus = error?.httpStatus ?? error?.response?.status;
+
+  // The node/axios transport error code (ECONNABORTED, ECONNRESET, ECONNREFUSED, …).
+  wrapped.networkCode = error?.networkCode ?? error?.code;
+
+  // Raw provider response body when the provider DID reply (a synchronous
+  // business rejection), and the raw axios response for good measure.
+  wrapped.providerResponse =
+    error?.providerResponse ?? error?.response?.data ?? error?.responseData;
+
+  // Explicit flag set by providers when their own API returned a definitive
+  // rejection body (status !== SUCCESS / api_response with an error). Survives
+  // re-wraps so nested catch blocks don't downgrade the classification.
+  // NOTE: deliberately NOT derived from providerResponse — an axios 5xx error
+  // also carries a response body, and that MUST stay ambiguous.
+  wrapped.isDefiniteProviderRejection = Boolean(error?.isDefiniteProviderRejection);
+
+  Object.defineProperty(wrapped, 'originalError', {
+    value: error,
+    enumerable: false,
+    writable: true,
+  });
+
+  return wrapped;
 }
 
 /**
@@ -301,6 +361,7 @@ module.exports = {
   extractProviderMessage,
   isSuccessResponse,
   describeHttpError,
+  wrapProviderError,
   resolveCableSubscribe,
   normalizeCableProviderKey,
   DEFAULT_NETWORK_MAP,
