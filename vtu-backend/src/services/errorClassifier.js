@@ -68,7 +68,7 @@ const AMBIGUOUS_NETWORK_CODES = new Set([
 const DEFINITE_HTTP_STATUSES = new Set([400, 401, 402, 403, 404, 405, 406, 409, 410, 412, 413, 415, 422, 423, 451]);
 
 // Message hints for transport failures thrown by the native `https` module
-// (peyflex) and other non-axios paths that don't carry a numeric code.
+// and other non-axios paths that don't carry a numeric code.
 const AMBIGUOUS_MESSAGE_HINTS = [
   /timed?\s*out/i,
   /timeout/i,

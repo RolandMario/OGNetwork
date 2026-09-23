@@ -31,7 +31,6 @@ function getProviderColorClass(provider: string): string {
     case "datastation": return "text-blue-600";
     case "gladtidings": return "text-purple-600";
     case "geodnatech":  return "text-emerald-600";
-    case "peyflex":     return "text-amber-600";
     case "all":         return "text-sky-600";
     // Cable network fallbacks (for legacy plans without a VTU-provider tag).
     case "dstv":        return "text-cyan-600";
@@ -45,7 +44,7 @@ function getProviderColorClass(provider: string): string {
 // VTU providers the admin can filter plans by, even when a provider has not yet
 // been synced (so e.g. Geodnatech is always available and clearly empty until
 // the admin runs a data sync).
-const KNOWN_PROVIDERS = ["all", "peyflex", "gladtidings", "datastation", "geodnatech"];
+const KNOWN_PROVIDERS = ["all", "gladtidings", "datastation", "geodnatech"];
 
 /**
  * Best-effort VTU-provider label for a plan. Prefers the explicit

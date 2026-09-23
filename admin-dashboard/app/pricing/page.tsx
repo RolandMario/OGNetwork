@@ -51,7 +51,7 @@ const AdminDashboard: React.FC = () => {
   const getToken = (): string | null => localStorage.getItem('adminToken');
 
   // =========================================================================
-  // Sync plans from Peyflex
+  // Sync plans from the configured provider
   // =========================================================================
   const handleSyncPlans = async () => {
     const token = getToken();
@@ -184,7 +184,7 @@ const AdminDashboard: React.FC = () => {
           disabled={syncing}
           style={{ ...styles.button, ...styles.syncButton }}
         >
-          {syncing ? 'Syncing...' : '🔄 Sync Plans from Peyflex'}
+          {syncing ? 'Syncing...' : '🔄 Sync Plans'}
         </button>
 
         <select

@@ -68,7 +68,7 @@ router.get('/providers/balances', adminController.getProviderBalances);
 // Plan Management
 // ---------------------------------------------------------------------------
 
-// Sync plans from Peyflex
+// Sync plans from the configured provider
 
 // Get all plans (with pricing info)
 router.get('/plans', adminController.getAllPlans);

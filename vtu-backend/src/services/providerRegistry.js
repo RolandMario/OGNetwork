@@ -4,10 +4,9 @@
 // Central registry that routes VTU service requests to the correct provider
 // based on admin configuration stored in AdminConfig collection.
 //
-// AdminConfig stores: { key: "serviceProviderMap", value: { airtime: "peyflex", data: "gladtidings", ... } }
+// AdminConfig stores: { key: "serviceProviderMap", value: { airtime: "gladtidings", data: "gladtidings", ... } }
 
 const PROVIDERS = {
-  peyflex: require('../providers/peyflexProvider'),
   gladtidings: require('../providers/gladtidingsProvider'),
   datastation: require('../providers/datastationProvider'),
   geodnatech: require('../providers/geodnatechProvider'),
@@ -132,12 +131,15 @@ function createAggregateProvider() {
   };
 }
 
-// Default mapping — used when AdminConfig hasn't been set yet
+// Default mapping — used when AdminConfig hasn't been set yet.
+// gladtidings is the default for every service: it is the only provider whose
+// full endpoint surface (airtime/data/cable/electricity + verify endpoints) is
+// verified working, so it is the safest fallback when no map is configured.
 const DEFAULT_MAP = {
-  airtime: 'peyflex',
-  data: 'peyflex',
-  cable: 'peyflex',
-  electricity: 'peyflex',
+  airtime: 'gladtidings',
+  data: 'gladtidings',
+  cable: 'gladtidings',
+  electricity: 'gladtidings',
 };
 
 // In-memory cache of the provider map (refreshed on each getProvider call)
@@ -147,7 +149,7 @@ let cachedProviderMap = null;
  * Load the provider mapping from AdminConfig.
  * Falls back to DEFAULT_MAP if not configured.
  * @param {Object} [AdminConfig] - The AdminConfig model (from req.models)
- * @returns {Promise<Object>} e.g. { airtime: "peyflex", data: "gladtidings", ... }
+ * @returns {Promise<Object>} e.g. { airtime: "gladtidings", data: "datastation", ... }
  */
 async function loadProviderMap(AdminConfig) {
   try {
@@ -155,6 +157,11 @@ async function loadProviderMap(AdminConfig) {
       const config = await AdminConfig.findOne({ key: 'serviceProviderMap' });
       if (config && config.value && typeof config.value === 'object') {
         const map = { ...DEFAULT_MAP, ...config.value };
+        // Normalise legacy DB values: 'peyflex' was removed as a provider, so any
+        // stored mapping that still references it falls back to the new default.
+        for (const service of Object.keys(map)) {
+          if (map[service] === 'peyflex') map[service] = DEFAULT_MAP[service];
+        }
         cachedProviderMap = map;
         return map;
       }
@@ -242,7 +249,7 @@ async function getProviderMap(AdminConfig = null) {
 /**
  * Update the provider mapping in AdminConfig.
  * @param {Object} AdminConfig - The AdminConfig model
- * @param {Object} newMap - e.g. { airtime: "gladtidings", data: "peyflex", ... }
+ * @param {Object} newMap - e.g. { airtime: "gladtidings", data: "datastation", ... }
  * @returns {Promise<Object>} - The saved map
  * @throws {Error} if validation fails
  */
@@ -318,7 +325,7 @@ function getAvailableProviders() {
 // have been tried. Verification is a read-only lookup, so it is safe to fall
 // through to another provider if the configured one is down (e.g. upstream
 // HTTP 500 / 404 on its /validateiuc-style endpoint).
-const CABLE_VERIFY_PREFERENCE = ['peyflex', 'datastation', 'gladtidings', 'geodnatech'];
+const CABLE_VERIFY_PREFERENCE = ['datastation', 'gladtidings', 'geodnatech'];
 
 /**
  * Verify a cable IUC with provider failover.
@@ -373,6 +380,11 @@ async function verifyCableIUCWithFallback({ iuc, identifier }, AdminConfig = nul
       console.warn(
         `[providerRegistry] IUC verify via "${provider.name || 'unknown'}" failed: ${err.message}`
       );
+      // A provider DEFINITIVELY rejected the card (upstream `invalid: true`).
+      // Verification is read-only and every candidate aggregates the same cable
+      // registry, so no point trying the rest — surface the real rejection
+      // instead of burying it under the next provider's 5xx.
+      if (err.isDefiniteProviderRejection) throw err;
     }
   }
 

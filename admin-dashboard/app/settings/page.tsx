@@ -41,7 +41,7 @@ interface ProviderMap {
   electricity: string;
 }
 
-const AVAILABLE_PROVIDERS = ['peyflex', 'gladtidings', 'datastation', 'geodnatech', 'all'];
+const AVAILABLE_PROVIDERS = ['gladtidings', 'datastation', 'geodnatech', 'all'];
 const SERVICE_LABELS: Record<string, string> = {
   airtime: 'Airtime',
   data: 'Data',
@@ -84,10 +84,10 @@ export default function SettingsPage() {
 
   // Provider config state
   const [providerMap, setProviderMap] = useState<ProviderMap>({
-    airtime: 'peyflex',
-    data: 'peyflex',
-    cable: 'peyflex',
-    electricity: 'peyflex',
+    airtime: 'gladtidings',
+    data: 'gladtidings',
+    cable: 'gladtidings',
+    electricity: 'gladtidings',
   });
   const [providerLoading, setProviderLoading] = useState(true);
   const [providerSaving, setProviderSaving] = useState(false);
@@ -221,7 +221,7 @@ export default function SettingsPage() {
   };
 
   const handleResetProviders = async () => {
-    if (!confirm("Reset all provider mappings to defaults (all peyflex)?")) return;
+    if (!confirm("Reset all provider mappings to defaults?")) return;
     try {
       setProviderSaving(true);
       setProviderError(null);

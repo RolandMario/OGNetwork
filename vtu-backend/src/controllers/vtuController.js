@@ -234,7 +234,7 @@ function getDataReceiptPlanLabel(plan = {}) {
 // Helper — ordered electricity provider candidates (active provider first)
 // ---------------------------------------------------------------------------
 // The DISCO plans saved in ServicePlan are often synced from a different
-// provider than the one currently active (e.g. peyflex slug plans such as
+// provider than the one currently active (e.g. legacy slug plans such as
 // 'ikeja-electric' stored while gladtidings is the configured provider).
 // This returns the configured provider first and then every other provider
 // that can verify/purchase electricity, so meter verification and purchase
@@ -474,9 +474,20 @@ exports.verifyCableIUC = async (req, res) => {
       { iuc, identifier },
       req.models.AdminConfig
     );
+    // Normalize the customer name so callers can rely on `customer_name`
+    // regardless of which provider's response shape won the fallback chain
+    // (providers expose `name`/`username`, others `customer_name`).
+    const result = attempt.result || {};
+    const customerName = result.customer_name || result.name || result.username || '';
     res.status(200).json({
       status: 'success',
-      data: { ...attempt.result, _provider: attempt.provider },
+      data: {
+        ...result,
+        customer_name: customerName,
+        name: customerName,
+        message: result.message || 'IUC verification successful',
+        _provider: attempt.provider,
+      },
     });
   } catch (error) {
     // Log the FULL error chain (which provider failed and why), not just a
@@ -562,7 +573,7 @@ exports.verifyMeter = async (req, res) => {
     // Try every electricity provider (configured primary first). This keeps
     // meter verification working even when the DISCO plans saved in the DB
     // were synced from a different provider than the currently active one
-    // (e.g. peyflex slug plans while gladtidings is the configured provider),
+    // (e.g. legacy slug plans while another provider is the active one),
     // which previously surfaced as "Invalid Request Parameters".
     const candidates = await getElectricityProviderCandidates(req.models.AdminConfig);
     const primaryProvider = candidates[0]; // the admin-configured (ACTIVE) provider
@@ -730,7 +741,7 @@ exports.buyAirtime = async (req, res) => {
 };
 
 // ---------------------------------------------------------------------------
-// Purchase — Data (NOW uses DB plan — debit ourPrice, call Peyflex at providerPrice)
+// Purchase — Data (NOW uses DB plan — debit ourPrice, call provider at providerPrice)
 // ---------------------------------------------------------------------------
 
 /**
@@ -741,7 +752,7 @@ exports.buyAirtime = async (req, res) => {
  *
  * NOTE: amount is no longer sent from the frontend.
  *       We look up ourPrice from DB and debit that.
- *       Peyflex is called at their providerPrice (plan_code determines it on their end).
+ *       The provider is called at their providerPrice (plan_code determines it on their end).
  */
 exports.buyData = async (req, res) => {
   const { network, plan_code, mobile_number } = req.body;
@@ -793,7 +804,7 @@ exports.buyData = async (req, res) => {
       Transaction,
     });
 
-    // 3. Call Peyflex — they charge at providerPrice via plan_code
+    // 3. Call the provider — they charge at providerPrice via plan_code
     const dataProvider = await providerRegistry.getProvider('data', req.models.AdminConfig);
     activeProviderName = dataProvider.name;
     const providerResponse = await dataProvider.purchaseData({ network, plan_code, mobile_number });
@@ -919,7 +930,7 @@ exports.subscribeCable = async (req, res) => {
       Transaction,
     });
 
-    // 3. Call Peyflex at providerPrice (amount determined by plan on their end)
+    // 3. Call the provider at providerPrice (amount determined by plan on their end)
     const cableProvider = await providerRegistry.getProvider('cable', req.models.AdminConfig);
     activeProviderName = cableProvider.name;
     const providerResponse = await cableProvider.subscribeCable({
@@ -1018,7 +1029,7 @@ exports.buyElectricity = async (req, res) => {
     // The `plan` sent from the mobile app is now the provider-agnostic DISCO slug
     // (e.g. 'ikeja-electric'), which maps to the DB `provider` field, while
     // `planCode` holds the provider-specific numeric disco_id. Try `planCode`
-    // first (legacy/peyflex plans where the slug == planCode), then `provider`.
+    // first (legacy plans where the slug == planCode), then `provider`.
     let dbPlan = null;
     try {
       dbPlan = await lookupPlan(ServicePlan, {

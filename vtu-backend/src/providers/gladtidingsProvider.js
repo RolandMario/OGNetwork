@@ -7,7 +7,7 @@
 // Base URL: https://www.gladtidingsdata.com/api
 
 const axios = require('axios');
-const { createApiClient, getNetworkCode, successResponse, extractErrorMessage, isSuccessResponse, describeHttpError, resolveCableSubscribe, wrapProviderError } = require('./baseProvider');
+const { createApiClient, getNetworkCode, successResponse, extractErrorMessage, extractProviderMessage, isSuccessResponse, describeHttpError, resolveCableSubscribe, resolveCableNameId, wrapProviderError } = require('./baseProvider');
 
 const API_KEY = process.env.GLADTIDINGS_API_KEY;
 const BASE_URL = process.env.GLADTIDINGS_BASE_URL;
@@ -306,12 +306,49 @@ async function verifyCableIUC({ iuc, identifier }) {
     throw new Error('[gladtidings] verifyCableIUC: iuc and identifier are required.');
   }
 
+  // /v2/validateiuc/ expects a NUMERIC cable_id (primary key), not the string
+  // slug ('gotv'). Resolve it from the /user/ cablename list (with a static
+  // family fallback if /user/ is briefly unavailable).
+  let user = null;
+  try {
+    user = await _fetchUser();
+  } catch (error) {
+    _clearUserCache();
+  }
+  const cablenameId = resolveCableNameId({ cableplan: user?.Cableplan, identifier });
+  if (!cablenameId) {
+    throw new Error(
+      `[gladtidings] verifyCableIUC: unrecognised cable provider "${identifier}". Re-sync cable plans from the active provider before verifying.`
+    );
+  }
+
   try {
     const response = await apiClient.get('/v2/validateiuc/', {
-      params: { cable_id: identifier, smart_card_number: iuc },
+      params: { cable_id: cablenameId, smart_card_number: iuc },
     });
-    return response.data;
+    const data = response.data;
+
+    // Upstream marks a failed lookup as invalid:true instead of an error status
+    // (verified live: {"invalid": true, "name": "INVALID IUC/SMARTCARD"}).
+    if (data && (data.invalid === true || (typeof data.invalid === 'string' && String(data.invalid).toLowerCase() === 'true'))) {
+      const err = new Error(`[gladtidings] verifyCableIUC: ${extractProviderMessage(data, 'Invalid IUC/Smartcard')}`);
+      err.isDefiniteProviderRejection = true; // provider confirmed the card is invalid
+      err.providerResponse = data;
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const customerName = data?.customer_name || data?.name || data?.username || '';
+    return {
+      status: 'success',
+      customer_name: customerName,
+      name: customerName,
+      message: data?.message || 'IUC verification successful',
+      provider: 'gladtidings',
+      _raw: data,
+    };
   } catch (error) {
+    if (error.isDefiniteProviderRejection) throw error;
     throw new Error(`[gladtidings] verifyCableIUC: ${extractErrorMessage(error, 'IUC verification failed')}${describeHttpError(error)}`);
   }
 }
@@ -323,7 +360,7 @@ async function subscribeCable({ identifier, plan, iuc, phone, amount }) {
 
   try {
     // Gladtidings expects NUMERIC primary keys for `cablename` and `cableplan`.
-    // Legacy plans may carry string slugs (e.g. peyflex 'nova'/'compact'), so
+    // Legacy plans may carry string slugs ('nova'/'compact'), so
     // resolve them to this provider's own ids before posting (same pattern the
     // electricity endpoints use to resolve a disco to its numeric id).
     const user = await _fetchUser();

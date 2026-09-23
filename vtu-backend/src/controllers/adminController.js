@@ -564,11 +564,11 @@ exports.deleteUser = async (req, res) => {
 };
 
 // ---------------------------------------------------------------------------
-// Sync all plans from Peyflex
+// Sync all plans from the configured provider
 // ---------------------------------------------------------------------------
 
 /**
- * @desc    Fetch all plans from Peyflex and sync to ServicePlan DB
+ * @desc    Fetch all plans from the configured provider and sync to ServicePlan DB
  * @route   POST /api/v1/admin/sync-plans
  * @access  Private, Admin only
  */
@@ -1113,7 +1113,7 @@ exports.getProviderConfig = async (req, res) => {
  * @desc    Update provider mapping for services
  * @route   PATCH /api/v1/admin/config/providers
  * @access  Private, Admin only
- * @body    { airtime: "peyflex", data: "gladtidings", cable: "geodnatech", electricity: "datastation" }
+ * @body    { airtime: "gladtidings", data: "gladtidings", cable: "geodnatech", electricity: "datastation" }
  */
 exports.updateProviderConfig = async (req, res) => {
   try {
@@ -1156,7 +1156,7 @@ exports.getAvailableProviders = async (req, res) => {
 };
 
 /**
- * @desc    Reset provider mapping to defaults (all peyflex)
+ * @desc    Reset provider mapping to defaults
  * @route   DELETE /api/v1/admin/config/providers
  * @access  Private, Admin only
  */
@@ -1168,7 +1168,7 @@ exports.resetProviderConfig = async (req, res) => {
     res.status(200).json({
       status: 'success',
       data: { providerMap: defaultMap },
-      message: 'Provider configuration reset to defaults (all peyflex).',
+      message: 'Provider configuration reset to defaults.',
     });
   } catch (error) {
     console.error('[adminController.resetProviderConfig] error:', error.message);

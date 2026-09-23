@@ -80,9 +80,30 @@ function successResponse({ providerTxId, token, message }) {
  * @param {string} fallback
  * @returns {string}
  */
+/**
+ * Strip HTML tags/entities from a raw upstream body (Django error pages, nginx
+ * 404 HTML, etc.) so it can be surfaced as a clean error message instead of raw
+ * markup. Non-string values pass through untouched.
+ * @param {*} str
+ * @returns {*}
+ */
+function stripHtml(str) {
+  if (typeof str !== 'string') return str;
+  return str
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#0?39;|&#x27;/gi, "'")
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function extractProviderMessage(data, fallback = '') {
   if (typeof data === 'string') {
-    const trimmed = data.trim();
+    const trimmed = stripHtml(data).trim();
     if (trimmed) return trimmed;
     return fallback;
   }
@@ -108,16 +129,20 @@ function extractProviderMessage(data, fallback = '') {
     data.failureReason ||
     data.FailureReason ||
     data.description ||
+    data.name ||
     data.fail;
-  if (direct) return String(direct).trim();
+  if (direct) {
+    const cleaned = stripHtml(String(direct)).trim();
+    if (cleaned) return cleaned;
+  }
 
   // Django REST Framework error format: { field: ["error message"] } or { field: "message" }
   // (skip the bare `status`/`Status` key — it's handled below).
   const firstKey = Object.keys(data).find((k) => k !== 'status' && k !== 'Status');
   if (firstKey !== undefined) {
     const firstVal = data[firstKey];
-    if (Array.isArray(firstVal) && firstVal.length > 0) return `${firstKey}: ${String(firstVal[0])}`;
-    if (typeof firstVal === 'string') return firstVal;
+    if (Array.isArray(firstVal) && firstVal.length > 0) return `${firstKey}: ${stripHtml(String(firstVal[0])).trim()}`;
+    if (typeof firstVal === 'string') return stripHtml(firstVal).trim();
   }
 
   // Bare status like "failed" is better than nothing.
@@ -169,7 +194,7 @@ function extractErrorMessage(error, fallback = 'Service temporarily unavailable'
  * axios HTTP status, the node network error code, and the raw provider body.
  *
  * @param {Object}  opts
- * @param {string}  opts.providerName - provider key, e.g. 'peyflex'
+ * @param {string}  opts.providerName - provider key, e.g. 'gladtidings'
  * @param {string}  opts.operation    - method name, e.g. 'purchaseData'
  * @param {Error}   opts.error        - the caught error (axios or node network error)
  * @param {string}  [opts.fallback]   - fallback human message
@@ -256,12 +281,48 @@ const CABLE_PLAN_KEYS_BY_PROVIDER = {
   startime: 'STARTIMEPLAN',
 };
 
+// Static cablename → numeric id fallback shared by the whole VTU platform family
+// (Gladtidings/Geodnatech/Datastation /user/ responses all use these ids).
+const CABLE_NAME_ID_FALLBACK = { gotv: 1, dstv: 2, startime: 3 };
+
+/**
+ * Resolve a cable provider identifier/slug to the NUMERIC cablename id that the
+ * family's validateiuc / cablesub endpoints expect (e.g. 'gotv'/'GOTV'/'3' → 3
+ * when the cablename list maps GOTV → 3). Mirrors step 1 of resolveCableSubscribe
+ * so IUC verification reuses the same id resolution as cable purchases.
+ *
+ * @param {Object} cableplan - raw `Cableplan` object from the provider's /user/ response
+ * @param {string} identifier - 'gotv' | 'dstv' | 'startime' | numeric id | 'GOTV'
+ * @returns {number|null} numeric cablename id, or null when nothing matched
+ */
+function resolveCableNameId({ cableplan, identifier }) {
+  const cableEntries = Array.isArray(cableplan && cableplan.cablename) ? cableplan.cablename : [];
+  const provKey = normalizeCableProviderKey(identifier);
+
+  // 1. Already numeric and recognised in the live cablename list → use as-is.
+  const provNum = Number(identifier);
+  if (String(identifier).trim() !== '' && !Number.isNaN(provNum)) {
+    if (cableEntries.some((c) => Number(c.id) === provNum)) return provNum;
+  }
+
+  // 2. Name/slug → match against the live cablename list.
+  for (const c of cableEntries) {
+    if (normalizeCableProviderKey(c.name) === provKey) return Number(c.id);
+  }
+
+  // 3. Static family default — /user/ may be briefly unavailable, and these ids
+  //    are stable across the whole platform family (GOTV=1, DSTV=2, STARTIME=3).
+  if (CABLE_NAME_ID_FALLBACK[provKey]) return CABLE_NAME_ID_FALLBACK[provKey];
+
+  return null;
+}
+
 /**
  * Resolve a cable subscription's `cablename` + `cableplan` to the NUMERIC primary
  * keys the Gladtidings/Geodnatech/Datastation family expects (mirrors how the
  * electricity controllers use `_resolveDiscoId`). The request body may arrive
  * with either numeric ids or legacy string slugs (e.g. plans synced from a
- * different provider such as peyflex `nova`/`compact`).
+ * different provider such as legacy `nova`/`compact` slugs).
  *
  * @param {Object} cableplan - The raw `Cableplan` object from the provider's /user/ response.
  * @param {string} identifier - Cable provider identifier/name (e.g. 'dstv', 'startime', 'startimes', 'GOTV').
@@ -271,23 +332,10 @@ const CABLE_PLAN_KEYS_BY_PROVIDER = {
  * @throws {Error} with an actionable message when nothing matches.
  */
 function resolveCableSubscribe({ cableplan, identifier, plan, amount }) {
-  const cableEntries = Array.isArray(cableplan && cableplan.cablename) ? cableplan.cablename : [];
   const provKey = normalizeCableProviderKey(identifier);
 
   // 1. Resolve cablename → numeric id.
-  let cablenameId = null;
-  const provNum = Number(identifier);
-  if (String(identifier).trim() !== '' && !Number.isNaN(provNum)) {
-    if (cableEntries.some((c) => Number(c.id) === provNum)) cablenameId = provNum;
-  }
-  if (!cablenameId) {
-    for (const c of cableEntries) {
-      if (normalizeCableProviderKey(c.name) === provKey) {
-        cablenameId = Number(c.id);
-        break;
-      }
-    }
-  }
+  const cablenameId = resolveCableNameId({ cableplan, identifier });
   if (!cablenameId) {
     throw new Error(
       `[cable] Unrecognised cable provider "${identifier}". Re-sync cable plans from the active provider before purchasing.`
@@ -345,7 +393,7 @@ function describeHttpError(error) {
   if (path) text += (text ? ' ' : '') + `@ ${path}`;
 
   if (body !== undefined && body !== null) {
-    let raw = typeof body === 'string' ? body : JSON.stringify(body);
+    let raw = typeof body === 'string' ? stripHtml(body) : JSON.stringify(body);
     if (raw && raw.length > 300) raw = `${raw.slice(0, 300)}...`;
     if (raw) text += (text ? ' — ' : '') + `body: ${raw}`;
   }
@@ -363,6 +411,8 @@ module.exports = {
   describeHttpError,
   wrapProviderError,
   resolveCableSubscribe,
+  resolveCableNameId,
   normalizeCableProviderKey,
+  stripHtml,
   DEFAULT_NETWORK_MAP,
 };

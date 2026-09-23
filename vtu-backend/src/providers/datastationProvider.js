@@ -7,7 +7,7 @@
 // Base URL: https://datastationapi.com/api
 
 const axios = require('axios');
-const { createApiClient, getNetworkCode, successResponse, extractErrorMessage, extractProviderMessage, isSuccessResponse, describeHttpError, resolveCableSubscribe, wrapProviderError } = require('./baseProvider');
+const { createApiClient, getNetworkCode, successResponse, extractErrorMessage, extractProviderMessage, isSuccessResponse, describeHttpError, resolveCableSubscribe, resolveCableNameId, wrapProviderError } = require('./baseProvider');
 
 const API_KEY = process.env.DATASTATION_API_KEY;
 const BASE_URL = process.env.DATASTATION_BASE_URL;
@@ -276,12 +276,48 @@ async function verifyCableIUC({ iuc, identifier }) {
     throw new Error('[datastation] verifyCableIUC: iuc and identifier are required.');
   }
 
+  // /validateiuc/ expects a NUMERIC cable_id (primary key), not the string slug
+  // ('gotv'). Resolve it from the /user/ cablename list (with a static family
+  // fallback if /user/ is briefly unavailable).
+  let user = null;
+  try {
+    user = await _fetchUser();
+  } catch (error) {
+    _clearUserCache();
+  }
+  const cablenameId = resolveCableNameId({ cableplan: user?.Cableplan, identifier });
+  if (!cablenameId) {
+    throw new Error(
+      `[datastation] verifyCableIUC: unrecognised cable provider "${identifier}". Re-sync cable plans from the active provider before verifying.`
+    );
+  }
+
   try {
     const response = await apiClient.get('/validateiuc/', {
-      params: { cable_id: identifier, smart_card_number: iuc },
+      params: { cable_id: cablenameId, smart_card_number: iuc },
     });
-    return response.data;
+    const data = response.data;
+
+    // Upstream marks a failed lookup as invalid:true instead of an error status.
+    if (data && (data.invalid === true || (typeof data.invalid === 'string' && String(data.invalid).toLowerCase() === 'true'))) {
+      const err = new Error(`[datastation] verifyCableIUC: ${extractProviderMessage(data, 'Invalid IUC/Smartcard')}`);
+      err.isDefiniteProviderRejection = true; // provider confirmed the card is invalid
+      err.providerResponse = data;
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const customerName = data?.customer_name || data?.name || data?.username || '';
+    return {
+      status: 'success',
+      customer_name: customerName,
+      name: customerName,
+      message: data?.message || 'IUC verification successful',
+      provider: 'datastation',
+      _raw: data,
+    };
   } catch (error) {
+    if (error.isDefiniteProviderRejection) throw error;
     throw new Error(`[datastation] verifyCableIUC: ${extractErrorMessage(error, 'IUC verification failed')}${describeHttpError(error)}`);
   }
 }

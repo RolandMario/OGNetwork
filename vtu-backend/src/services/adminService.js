@@ -342,7 +342,7 @@ async function syncElectricityPlans(ServicePlan, { providerName, AdminConfig } =
 }
 
 // ---------------------------------------------------------------------------
-// Sync all plans from Peyflex to ServicePlan DB
+// Sync all plans from the configured provider to ServicePlan DB
 // ---------------------------------------------------------------------------
 
 /**
