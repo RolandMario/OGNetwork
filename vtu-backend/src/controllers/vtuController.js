@@ -161,6 +161,80 @@ async function lookupPlan(ServicePlan, { service, provider, planCode }) {
 }
 
 // ---------------------------------------------------------------------------
+// Helper — refuse to sell a plan below the provider's cost
+// ---------------------------------------------------------------------------
+// Profit is recorded at purchase time as `(userPrice - providerPrice) * 100`.
+// When `providerPrice` is stale, or was overwritten by a *different* VTU API's
+// plan that merely shares the same numeric plan code (all three APIs reuse
+// codes for unrelated products), that formula books a fictitious loss on a
+// perfectly normal sale. Block the purchase instead of silently eating the
+// margin, and log loudly so the catalog gets fixed.
+function assertSellPriceAboveCost({ plan, userPrice, service }) {
+  const cost = Number(plan?.providerPrice);
+  if (!Number.isFinite(cost) || cost <= 0) {
+    console.warn(
+      `[vtuController] ${service} plan ${plan?.provider}/${plan?.planCode} has no valid providerPrice — margin cannot be verified.`
+    );
+    return;
+  }
+
+  if (Number(userPrice) < cost) {
+    const detail = `${service} ${plan.provider}/${plan.planCode} "${plan.planName}"`;
+    console.error(
+      `[vtuController] BLOCKED mispriced ${detail}: selling at ₦${userPrice} but provider cost is ₦${cost}. ` +
+      'Fix the plan price (or the synced providerPrice) in the admin dashboard.'
+    );
+    throw Object.assign(
+      new Error(
+        `This plan is temporarily unavailable: its price (₦${userPrice}) is below the provider cost (₦${cost}). ` +
+        'Please choose another plan or contact support.'
+      ),
+      { statusCode: 409, code: 'PLAN_MISPRICED' }
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Helper — the plan must be fulfilled by the API that priced it
+// ---------------------------------------------------------------------------
+// A ServicePlan keeps the identity and cost of the provider that CREATED it
+// (`metadata.syncedFromProvider`). If the admin later switches the active
+// data/cable provider, the same plan code can mean a completely different
+// product on the new API — fulfilling it would charge the user one price and pay
+// the other API a very different one. Refuse the purchase instead.
+async function assertPlanServedByActiveProvider({ plan, service, AdminConfig }) {
+  const owner = plan?.metadata?.syncedFromProvider;
+  if (!owner) return; // legacy plan without provenance — nothing to compare
+
+  let providerMap = null;
+  try {
+    providerMap = await providerRegistry.getProviderMap(AdminConfig);
+  } catch (err) {
+    console.warn(
+      `[vtuController] Could not resolve the active ${service} provider (${err.message}) — skipping ownership check.`
+    );
+    return;
+  }
+
+  const activeProvider = providerMap ? providerMap[service] : null;
+  // "ALL API" fans out across every provider, so any owner is acceptable.
+  if (!activeProvider || activeProvider === providerRegistry.ALL_API_KEY) return;
+  if (owner === activeProvider) return;
+
+  const detail = `${service} ${plan.provider}/${plan.planCode} "${plan.planName}"`;
+  console.error(
+    `[vtuController] BLOCKED ${detail}: priced by "${owner}" but the active ${service} provider is "${activeProvider}".`
+  );
+  throw Object.assign(
+    new Error(
+      `This plan is temporarily unavailable — it was synced from ${owner}, but ${activeProvider} is currently ` +
+      `the active provider for ${service}. Please choose another plan or contact support.`
+    ),
+    { statusCode: 409, code: 'PLAN_PROVIDER_MISMATCH' }
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Helper — data plan display label (ensures the data size is always shown)
 // ---------------------------------------------------------------------------
 // VTU providers store data plan names inconsistently: bare sizes ("10", "500"),
@@ -777,12 +851,22 @@ exports.buyData = async (req, res) => {
       planCode: plan_code,
     });
 
+    // 1b. The plan must belong to the API that will actually fulfil it.
+    await assertPlanServedByActiveProvider({
+      plan,
+      service:     'data',
+      AdminConfig: req.models.AdminConfig,
+    });
+
     // 2. Determine user's price based on their level
     // NOTE: prices default to 0 in the schema, so we must check for a valid
     //       positive price (> 0) before using it. Otherwise fall back to ourPrice.
     const userLevel = req.user.level || 'normal';
     const levelPrice = plan.prices && plan.prices[userLevel];
     const userPrice = (levelPrice && levelPrice > 0) ? levelPrice : plan.ourPrice;
+
+    // 2b. Never debit a user for a plan priced below what the provider charges.
+    assertSellPriceAboveCost({ plan, userPrice, service: 'data' });
 
     // Display label for the receipt — derived so the data size (e.g. "10GB")
     // is always visible, even when planName is a bare/misleading provider label.
@@ -914,12 +998,22 @@ exports.subscribeCable = async (req, res) => {
       planCode: plan,
     });
 
+    // 1b. The plan must belong to the API that will actually fulfil it.
+    await assertPlanServedByActiveProvider({
+      plan:        dbPlan,
+      service:     'cable',
+      AdminConfig: req.models.AdminConfig,
+    });
+
     // 2. Determine user's price based on their level
     // NOTE: prices default to 0 in the schema, so we must check for a valid
     //       positive price (> 0) before using it. Otherwise fall back to ourPrice.
     const userLevel = req.user.level || 'normal';
     const levelPrice = dbPlan.prices && dbPlan.prices[userLevel];
     const userPrice = (levelPrice && levelPrice > 0) ? levelPrice : dbPlan.ourPrice;
+
+    // 2b. Never debit a user for a plan priced below what the provider charges.
+    assertSellPriceAboveCost({ plan: dbPlan, userPrice, service: 'cable' });
 
     txData = await debitWalletAndCreateTx({
       userId,

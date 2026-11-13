@@ -63,6 +63,36 @@ function initLevelPrices(basePrice) {
   return prices;
 }
 
+/**
+ * Guard — list the prices that sit below the provider's cost.
+ *
+ * Profit is booked at purchase time as `(sellingPrice - providerPrice)`, so a
+ * selling price below cost records a loss on every sale. Refusing such a price
+ * up-front is far cheaper than discovering it on the dashboard later.
+ *
+ * @param {Object} plan - ServicePlan doc (needs providerPrice)
+ * @param {Object} candidatePrices - { normal, affiliate, top_user, api_user }
+ * @returns {string[]} human-readable violations (empty when the price is safe)
+ */
+function belowCostViolations(plan, candidatePrices) {
+  const cost = Number(plan && plan.providerPrice);
+  if (!Number.isFinite(cost) || cost <= 0) return [];
+
+  const violations = [];
+  for (const level of USER_LEVELS) {
+    const raw = candidatePrices ? candidatePrices[level] : undefined;
+    if (raw === undefined || raw === null || raw === '') continue;
+    const price = Number(raw);
+    if (!Number.isFinite(price)) continue;
+    if (price < cost) violations.push(`${level} ₦${price} (cost ₦${cost})`);
+  }
+  return violations;
+}
+
+function describePlan(plan) {
+  return `${plan.service}/${plan.provider}/${plan.planCode} "${plan.planName}"`;
+}
+
 // ---------------------------------------------------------------------------
 // Sync helpers — individual service sync
 // ---------------------------------------------------------------------------
@@ -75,7 +105,7 @@ function initLevelPrices(basePrice) {
  * @param {Object} [options.AdminConfig] - AdminConfig model for reading provider map
  */
 async function syncDataPlans(ServicePlan, { providerName, AdminConfig } = {}) {
-  const results = { synced: 0, updated: 0, skipped: 0, errors: [] };
+  const results = { synced: 0, updated: 0, skipped: 0, errors: [], collisions: [] };
 
   // Resolve the provider(s) to sync from. When the configured provider is
   // "ALL API", sync from every VTU API in ALL_API_PROVIDERS so all of them
@@ -117,6 +147,11 @@ async function syncDataPlans(ServicePlan, { providerName, AdminConfig } = {}) {
               plan_type:           plan.plan_type || '',
               validity:            plan.validity || '',
               syncedFromProvider:  providerLabel,
+              // Which API this cost figure came from. `_providerData` is written
+              // only at creation, so this tag is what makes future cost drift
+              // attributable during an audit.
+              priceSource:         providerLabel,
+              priceUpdatedAt:      new Date(),
             },
             lastSyncedAt:  new Date(),
             isActive:      true,
@@ -129,19 +164,41 @@ async function syncDataPlans(ServicePlan, { providerName, AdminConfig } = {}) {
           });
 
           if (existing) {
-            // Existing plan — refresh provider data. When a plan already belongs
-            // to another provider (e.g. the same plan code exists on datastation
-            // and geodnatech), KEEP the original owner's tag instead of flipping
-            // it to whichever provider iterated last. This prevents an "ALL API"
-            // data sync from silently re-tagging the active provider's plans
-            // (which would break the mobile app's active-provider filter).
-            if (existing.metadata?.syncedFromProvider && existing.metadata.syncedFromProvider !== providerLabel) {
-              update.metadata = {
-                ...existing.metadata,
-                ...update.metadata,
-                syncedFromProvider: existing.metadata.syncedFromProvider,
-              };
+            // Existing plan.
+            //
+            // A plan code is unique only *per network*, never per upstream API:
+            // datastation, gladtidings and geodnatech all reuse the same numeric
+            // codes for completely different products (code "639" is a ₦407
+            // 1.5GB SME bundle on one API and a ₦132,400 60GB/90-day router plan
+            // on another). Refreshing planName/description/providerPrice from a
+            // *different* provider replaces the cost basis of a plan the admin
+            // has already priced, and every later purchase then books a
+            // fictitious profit/loss (this produced a fake -₦131,960 loss on
+            // 2026-11-10, which dragged the whole month's dashboard negative).
+            //
+            // So the document keeps the identity, name and cost of the provider
+            // that created it. Plans from other APIs that collide on the code are
+            // skipped and reported in `collisions`, never merged in.
+            const owner = existing.metadata?.syncedFromProvider;
+            if (owner && owner !== providerLabel) {
+              results.skipped++;
+              results.collisions.push({
+                network:       network.identifier,
+                planCode:      String(plan.plan_code),
+                owner,
+                ignoredFrom:   providerLabel,
+                storedCost:    existing.providerPrice,
+                ignoredCost:   providerPrice,
+                ignoredLabel:  plan.label || '',
+              });
+              console.warn(
+                `[adminService] DATA plan-code collision: ${network.identifier}/${plan.plan_code} ` +
+                `is owned by ${owner} (₦${existing.providerPrice}) — ignoring ${providerLabel}'s ` +
+                `"${plan.label || plan.plan_code}" (₦${providerPrice}).`
+              );
+              continue;
             }
+
             await ServicePlan.updateOne({ _id: existing._id }, { $set: update });
             results.updated++;
           } else {
@@ -356,10 +413,10 @@ async function syncElectricityPlans(ServicePlan, { providerName, AdminConfig } =
  *   plans were imported — e.g. switching the active data provider to geodnatech
  *   then showed an empty/never-synced data set).
  * @param {Object} [options.AdminConfig]
- * @returns {Object} { synced, updated, skipped, errors }
+ * @returns {Object} { synced, updated, skipped, errors, collisions }
  */
 async function syncAllPlans(ServicePlan, { providerName, dataProviderName, AdminConfig } = {}) {
-  const results = { synced: 0, updated: 0, skipped: 0, errors: [] };
+  const results = { synced: 0, updated: 0, skipped: 0, errors: [], collisions: [] };
 
   try {
     const dataResults = await syncDataPlans(ServicePlan, { providerName: dataProviderName || providerName, AdminConfig });
@@ -367,6 +424,7 @@ async function syncAllPlans(ServicePlan, { providerName, dataProviderName, Admin
     results.updated += dataResults.updated;
     results.skipped += dataResults.skipped;
     results.errors.push(...dataResults.errors);
+    results.collisions.push(...(dataResults.collisions || []));
 
     const cableResults = await syncCablePlans(ServicePlan, { providerName, AdminConfig });
     results.synced += cableResults.synced;
@@ -425,15 +483,27 @@ async function updatePlanPrice(ServicePlan, { service, provider, planCode, ourPr
     throw new Error('service, provider, planCode, and ourPrice are required.');
   }
 
+  const existing = await ServicePlan.findOne({ service, provider, planCode }).lean();
+
+  if (!existing) {
+    throw new Error(`Plan not found: ${service} ${provider} ${planCode}`);
+  }
+
+  // `ourPrice` is the fallback selling price (used whenever a level price is 0),
+  // so it must never sit below the provider's cost.
+  const violations = belowCostViolations(existing, { normal: ourPrice });
+  if (violations.length) {
+    throw new Error(
+      `Price below provider cost for ${describePlan(existing)}: ${violations.join(', ')}. ` +
+      'Raise the price or re-sync the plan cost first.'
+    );
+  }
+
   const updated = await ServicePlan.findOneAndUpdate(
     { service, provider, planCode },
     { ourPrice: Number(ourPrice) },
     { new: true }
   );
-
-  if (!updated) {
-    throw new Error(`Plan not found: ${service} ${provider} ${planCode}`);
-  }
 
   return updated;
 }
@@ -491,17 +561,34 @@ async function updatePlanLevelPrices(ServicePlan, planId, prices) {
   // Validate that only valid level keys are provided
   const validKeys = USER_LEVELS;
   const updateData = {};
+  const candidatePrices = {};
   let hasValidKeys = false;
 
   for (const key of Object.keys(prices || {})) {
     if (validKeys.includes(key) && prices[key] !== undefined && prices[key] !== null) {
       updateData[`prices.${key}`] = Number(prices[key]);
+      candidatePrices[key] = Number(prices[key]);
       hasValidKeys = true;
     }
   }
 
   if (!hasValidKeys) {
     throw new Error('No valid level prices provided. Valid levels: ' + validKeys.join(', '));
+  }
+
+  const plan = await ServicePlan.findById(planId).lean();
+  if (!plan) {
+    throw new Error('Plan not found.');
+  }
+
+  // Guard: every selling price must cover the provider's cost. This is the exact
+  // mistake that priced airtel plan 639 at ₦440 against a ₦132,400 cost.
+  const violations = belowCostViolations(plan, { ...(plan.prices || {}), ...candidatePrices });
+  if (violations.length) {
+    throw new Error(
+      `Price below provider cost for ${describePlan(plan)}: ${violations.join(', ')}. ` +
+      'Set the price at or above the provider cost, or fix the plan cost first.'
+    );
   }
 
   const updated = await ServicePlan.findByIdAndUpdate(
@@ -530,6 +617,30 @@ async function updatePlanLevelPrices(ServicePlan, planId, prices) {
  * @param {boolean} visibleOnMobile
  */
 async function updatePlanVisibility(ServicePlan, planId, visibleOnMobile) {
+  const plan = await ServicePlan.findById(planId).lean();
+  if (!plan) {
+    throw new Error('Plan not found.');
+  }
+
+  // Guard: hiding is always allowed, but a plan whose selling price is below the
+  // provider's cost must not be put in front of users — every purchase would book
+  // a loss (this is how the ₦440-vs-₦132,400 airtel plan got sold repeatedly).
+  if (Boolean(visibleOnMobile)) {
+    const effectivePrices = {};
+    for (const level of USER_LEVELS) {
+      const levelPrice = plan.prices ? Number(plan.prices[level]) : 0;
+      effectivePrices[level] = levelPrice > 0 ? levelPrice : Number(plan.ourPrice);
+    }
+
+    const violations = belowCostViolations(plan, effectivePrices);
+    if (violations.length) {
+      throw new Error(
+        `Cannot show ${describePlan(plan)} on the mobile app: ${violations.join(', ')}. ` +
+        'Fix the selling prices (or the synced provider cost) first.'
+      );
+    }
+  }
+
   const updated = await ServicePlan.findByIdAndUpdate(
     planId,
     { visibleOnMobile: Boolean(visibleOnMobile) },

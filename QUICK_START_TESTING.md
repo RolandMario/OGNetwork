@@ -136,6 +136,8 @@ curl -X POST http://localhost:5001/api/v1/user/wallet/fund \
 - [ ] Plans page loads and edit modal works
 - [ ] Wallet balance displays correctly (no "insufficient balance" bug)
 - [ ] Can buy data/airtime/cable/electricity
+- [ ] Buying a plan priced below the provider cost is refused (HTTP 409)
+- [ ] `node vtu-backend/scripts/auditPlanCostDrift.js` reports no drift for the plans you sell
 - [ ] Push notification endpoints work
 
 ---
@@ -154,3 +156,62 @@ curl -X POST http://localhost:5001/api/v1/user/wallet/fund \
 ### "Insufficient balance" when you have enough
 → **Fixed:** This was a unit mismatch bug (Naira vs Kobo)
 → Redux stores balance in **Naira**, but screens were treating it as **Kobo**
+
+---
+
+## 🧮 Plan Cost Audit & Repair (profit accuracy)
+
+Data plans are keyed by `(service, network, planCode)`, but the VTU APIs
+(datastation / gladtidings / geodnatech) **reuse the same numeric plan codes for
+unrelated products** (e.g. code `639` is a ₦407 1.5GB bundle on one API and a
+₦132,400 60GB/90-day router plan on another). `syncDataPlans` no longer merges a
+plan from a provider that does not own the code — it skips it and reports a
+"plan-code collision" — so a stored `providerPrice` can no longer be replaced by
+another API's price.
+
+### 1. Audit stored costs (read-only)
+
+```bash
+node vtu-backend/scripts/auditPlanCostDrift.js            # all tenants
+node vtu-backend/scripts/auditPlanCostDrift.js --tenant=demo --limit=100
+```
+
+Compares every data plan's stored `providerPrice` with the creation-time
+`_providerData` snapshot and lists the plans whose cost basis is wrong
+("SELLS BELOW COST" = the purchase guard will refuse those plans).
+
+### 2. Repair one collided plan
+
+```bash
+# dry run — prints current vs snapshot values and the profit correction
+node vtu-backend/scripts/repairPlanCodeCollision.js --provider=airtel --planCode=639
+
+# write the changes (plan name/description/cost + affected transaction profits)
+node vtu-backend/scripts/repairPlanCodeCollision.js --provider=airtel --planCode=639 --apply
+```
+
+The repair is idempotent and restores the plan from its own `_providerData`
+snapshot; it never calls a provider API (so it works even with an expired key).
+Always review the dry run first — a *legitimate* price change by the owning
+provider also shows as drift, and only a human can tell the two apart from the
+plan labels.
+
+### 3. Purchase-time guards (defence in depth)
+
+| Guard | Behaviour |
+|---|---|
+| `assertSellPriceAboveCost` | Rejects a purchase (HTTP 409 `PLAN_MISPRICED`) when the user's price is below the stored provider cost — no wallet debit. |
+| `assertPlanServedByActiveProvider` | Rejects a purchase (HTTP 409 `PLAN_PROVIDER_MISMATCH`) when the plan was priced by a different API than the currently active provider for that service. |
+| Admin price edits | `updatePlanLevelPrices` / `updatePlanPrice` / `updatePlanVisibility` refuse any price below the provider cost. |
+| Sync | Collides on a plan code are skipped, logged and returned in `results.collisions`. |
+
+### 4. Dashboard profit figures
+
+`GET /admin/dashboard` returns:
+
+- `totalRevenue`, `totalVolume` — **in naira** (they used to be raw kobo, 100× too large)
+- `profitsByService` — gross recorded profit per service
+- `commissionsByService` — commission credited to users for the same period
+- `profitNetByService` — gross − commission (what the dashboard displays)
+
+Month filters use UTC with an exclusive end bound (`>= 1st 00:00Z`, `< 1st of next month`).

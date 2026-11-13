@@ -47,30 +47,46 @@ exports.getDashboard = async (req, res) => {
         .lean(),
     ]);
 
-    // Calculate total revenue from successful transactions
+    // Calculate total revenue from successful transactions.
+    // Amounts are stored in kobo; convert to naira here because the dashboard
+    // renders these values as-is (the old raw value was 100× too large).
     const revenueResult = await Transaction.aggregate([
       { $match: { status: 'SUCCESS', type: { $ne: 'FUNDING' } } },
       { $group: { _id: null, total: { $sum: '$amount' } } },
     ]);
-    const totalRevenue = revenueResult[0]?.total || 0;
+    const totalRevenue = Math.round(revenueResult[0]?.total || 0) / 100;
 
-    // Build profit match filter — optionally filter by month/year
+    // Profit/commission match filters — optionally filtered by month/year.
+    // Bounds are computed in UTC with an EXCLUSIVE upper bound, so a sale made in
+    // the first hour of a month (WAT = UTC+1) can no longer fall into the
+    // previous month because of the server's own timezone.
     const profitMatch = { status: 'SUCCESS', type: { $in: ['AIRTIME', 'DATA', 'CABLE', 'ELECTRICITY'] } };
+    let commissionMatch = { status: 'SUCCESS', type: 'COMMISSION' };
+
     const { month, year } = req.query;
     if (month && year) {
       const m = parseInt(month);
       const y = parseInt(year);
       if (m >= 1 && m <= 12 && y >= 2000) {
-        const startDate = new Date(y, m - 1, 1);
-        const endDate = new Date(y, m, 0, 23, 59, 59, 999);
-        profitMatch.createdAt = { $gte: startDate, $lte: endDate };
+        const startDate = new Date(Date.UTC(y, m - 1, 1));
+        const endDate = new Date(Date.UTC(y, m, 1)); // exclusive
+        profitMatch.createdAt = { $gte: startDate, $lt: endDate };
+        commissionMatch = { ...commissionMatch, createdAt: { $gte: startDate, $lt: endDate } };
       }
     }
 
-    // Calculate profits grouped by service type
-    const profitResult = await Transaction.aggregate([
-      { $match: profitMatch },
-      { $group: { _id: '$type', totalProfit: { $sum: '$profit' } } },
+    // Gross profit recorded per purchase, plus the commissions credited back to
+    // users for those same purchases. Commission is a real cost of the sale, so
+    // reporting gross profit alone overstates the margin.
+    const [profitResult, commissionResult] = await Promise.all([
+      Transaction.aggregate([
+        { $match: profitMatch },
+        { $group: { _id: '$type', totalProfit: { $sum: '$profit' } } },
+      ]),
+      Transaction.aggregate([
+        { $match: commissionMatch },
+        { $group: { _id: '$details.service', total: { $sum: '$amount' } } },
+      ]),
     ]);
 
     const profitsByService = {
@@ -87,6 +103,23 @@ exports.getDashboard = async (req, res) => {
       profitsByService.total += profitInNaira;
     }
 
+    const commissionsByService = { airtime: 0, data: 0, cable: 0, electricity: 0, total: 0 };
+    for (const entry of commissionResult) {
+      const service = String(entry._id || '').toLowerCase();
+      const commissionInNaira = (entry.total || 0) / 100;
+      if (commissionsByService[service] !== undefined) commissionsByService[service] += commissionInNaira;
+      commissionsByService.total += commissionInNaira;
+    }
+
+    // Net = gross recorded profit − commission paid out for the same period.
+    const profitNetByService = { AIRTIME: 0, DATA: 0, CABLE: 0, ELECTRICITY: 0, total: 0 };
+    for (const service of ['AIRTIME', 'DATA', 'CABLE', 'ELECTRICITY']) {
+      const net = profitsByService[service] - (commissionsByService[service.toLowerCase()] || 0);
+      profitNetByService[service] = Math.round(net * 100) / 100;
+      profitNetByService.total += profitNetByService[service];
+    }
+    profitNetByService.total = Math.round(profitNetByService.total * 100) / 100;
+
     res.status(200).json({
       status: 'success',
       data: {
@@ -97,9 +130,13 @@ exports.getDashboard = async (req, res) => {
         pendingTransactions: pendingTx,
         failedTransactions: failedTx,
         totalRevenue,
-        totalVolume: walletData[0]?.totalBalance || 0,
+        totalVolume: (walletData[0]?.totalBalance || 0) / 100,
         recentTransactions,
         profitsByService,
+        // Commissions credited to users for the same period, and the resulting
+        // net profit (gross recorded profit − commissions paid).
+        commissionsByService,
+        profitNetByService,
         // Include selected month/year in response for frontend reference
         selectedMonth: month ? parseInt(month) : null,
         selectedYear: year ? parseInt(year) : null,
@@ -596,7 +633,9 @@ exports.syncPlans = async (req, res) => {
     res.status(200).json({
       status: 'success',
       data:   results,
-      message: `Synced ${results.synced} plans, updated ${results.updated} existing, skipped ${results.skipped}. ${results.errors.length} errors.`,
+      message: `Synced ${results.synced} plans, updated ${results.updated} existing, skipped ${results.skipped}`
+        + `${results.collisions?.length ? ` (${results.collisions.length} plan-code collision(s) ignored — another provider owns those codes)` : ''}. `
+        + `${results.errors.length} errors.`,
     });
 
   } catch (error) {
@@ -889,7 +928,9 @@ exports.syncDataPlans = async (req, res) => {
     res.status(200).json({
       status: 'success',
       data: results,
-      message: `Synced ${results.synced} data plans, updated ${results.updated} existing, skipped ${results.skipped}. ${results.errors.length} errors.`,
+      message: `Synced ${results.synced} data plans, updated ${results.updated} existing, skipped ${results.skipped}`
+        + `${results.collisions?.length ? ` (${results.collisions.length} plan-code collision(s) ignored — another provider owns those codes)` : ''}. `
+        + `${results.errors.length} errors.`,
     });
   } catch (error) {
     console.error('[adminController.syncDataPlans] error:', error.message);

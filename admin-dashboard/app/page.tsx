@@ -24,6 +24,21 @@ interface DashboardStats {
     ELECTRICITY: number;
     total: number;
   };
+  // Gross recorded profit minus commissions credited to users for the period.
+  profitNetByService?: {
+    AIRTIME: number;
+    DATA: number;
+    CABLE: number;
+    ELECTRICITY: number;
+    total: number;
+  };
+  commissionsByService?: {
+    airtime: number;
+    data: number;
+    cable: number;
+    electricity: number;
+    total: number;
+  };
   selectedMonth: number | null;
   selectedYear: number | null;
 }
@@ -69,10 +84,11 @@ const MONTHS = [
 // ---------------------------------------------------------------------------
 // Stat Card Component
 // ---------------------------------------------------------------------------
-function StatCard({ title, value, change, icon, color }: {
+function StatCard({ title, value, change, hint, icon, color }: {
   title: string;
   value: string;
   change?: string;
+  hint?: string;
   icon: React.ReactNode;
   color: string;
 }) {
@@ -90,6 +106,7 @@ function StatCard({ title, value, change, icon, color }: {
               {change}
             </p>
           )}
+          {hint && <p className="text-xs text-slate-500 mt-1">{hint}</p>}
         </div>
         <div className={`p-3 rounded-lg ${color}`}>
           {icon}
@@ -172,6 +189,14 @@ export default function DashboardPage() {
   }
 
   const p = stats?.profitsByService;
+  // Net profit = gross recorded profit − commissions credited to users for the
+  // same period. Older API responses omit the net/commission fields, so fall
+  // back to the gross figures rather than showing ₦0.
+  const netProfit = stats?.profitNetByService;
+  const commissions = stats?.commissionsByService;
+
+  const fmtNaira = (value?: number | null) =>
+    `₦${(Number(value) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
   return (
     <div className="space-y-6">
@@ -261,7 +286,7 @@ export default function DashboardPage() {
         />
         <StatCard
           title="Total Revenue"
-          value={`₦${(stats?.totalRevenue || 0).toLocaleString()}`}
+          value={fmtNaira(stats?.totalRevenue)}
           change="All time"
           color="bg-purple-100"
           icon={<svg className="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>}
@@ -280,39 +305,51 @@ export default function DashboardPage() {
         <div>
           <h2 className="text-lg font-semibold text-slate-900 mb-3">
             {useMonthFilter
-              ? `Profits for ${MONTHS[selectedMonth - 1]} ${selectedYear}`
-              : "Total Profits by Service (All Time)"}
+              ? `Net profits for ${MONTHS[selectedMonth - 1]} ${selectedYear}`
+              : "Net profits by service (all time)"}
           </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
             <StatCard
-              title="Total Profit"
-              value={`₦${(p.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+              title="Net Profit"
+              value={fmtNaira(netProfit?.total ?? p.total)}
+              hint={`Gross ${fmtNaira(p.total)} · commission ${fmtNaira(commissions?.total)}`}
               color="bg-amber-100"
               icon={<svg className="w-6 h-6 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>}
             />
             <StatCard
               title="Airtime"
-              value={`₦${(p.AIRTIME || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+              value={fmtNaira(netProfit?.AIRTIME ?? p.AIRTIME)}
+              hint={`Gross ${fmtNaira(p.AIRTIME)}`}
               color="bg-blue-100"
               icon={<svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>}
             />
             <StatCard
               title="Data"
-              value={`₦${(p.DATA || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+              value={fmtNaira(netProfit?.DATA ?? p.DATA)}
+              hint={`Gross ${fmtNaira(p.DATA)}`}
               color="bg-green-100"
               icon={<svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" /></svg>}
             />
             <StatCard
               title="Cable"
-              value={`₦${(p.CABLE || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+              value={fmtNaira(netProfit?.CABLE ?? p.CABLE)}
+              hint={`Gross ${fmtNaira(p.CABLE)}`}
               color="bg-orange-100"
               icon={<svg className="w-6 h-6 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>}
             />
             <StatCard
               title="Electricity"
-              value={`₦${(p.ELECTRICITY || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+              value={fmtNaira(netProfit?.ELECTRICITY ?? p.ELECTRICITY)}
+              hint={`Gross ${fmtNaira(p.ELECTRICITY)}`}
               color="bg-yellow-100"
               icon={<svg className="w-6 h-6 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>}
+            />
+            <StatCard
+              title="Commissions Paid"
+              value={fmtNaira(commissions?.total)}
+              hint="Credited to users"
+              color="bg-rose-100"
+              icon={<svg className="w-6 h-6 text-rose-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" /></svg>}
             />
           </div>
         </div>
